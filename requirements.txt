@@ -1,0 +1,20 @@
+# Core UI and general utilities
+tkinterdnd2-universal>=2.0.1 # For drag and drop
+requests>=2.25.1 # For potential network requests (e.g., future version checks, or if _worker_filter_and_select fetched thumbnails)
+
+# Audio/Video Processing
+mutagen>=1.45.1 # For audio metadata
+yt-dlp>=2023.01.01 # Assumed to be in PATH, but listing for completeness if it were a pip package. This is more of a system dependency.
+
+# Transcription Engine and Dependencies
+faster-whisper>=1.0.0 # Transcription engine
+torch>=1.13.0 # For faster-whisper device detection and some ops (CPU or GPU version)
+librosa>=0.9.2 # For audio loading and spectrograms
+numpy>=1.23.0 # Numerical processing for librosa, matplotlib, etc.
+matplotlib>=3.5.0 # For spectrogram plotting
+
+# Note: System dependencies like ffmpeg, and yt-dlp (if not installed via pip)
+# need to be handled separately by the user or environment setup.
+# For PyTorch, specify CPU/GPU version as needed during installation, e.g.:
+# torch --index-url https://download.pytorch.org/whl/cpu  (for CPU)
+# torch --index-url https://download.pytorch.org/whl/cu118 (for CUDA 11.8, example)

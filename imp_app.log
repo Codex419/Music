@@ -1,0 +1,7 @@
+2025-05-30 15:44:57,663 - INFO - main_app - __init__ - IMP Initialized. Version: 0.1.0 Alpha. FW: 1.1.1, Torch: 2.7.0+cpu, Librosa: 0.11.0
+2025-05-30 15:44:57,663 - INFO - main_app - check_dependencies_on_startup - Checking critical dependencies...
+2025-05-30 15:45:00,386 - INFO - main_app - check_dependencies_on_startup - Critical external dependencies (yt-dlp, ffmpeg) seem to be available.
+2025-05-30 15:49:13,583 - INFO - [main_app.__init__:185] - IMP Initialized. Version: 0.1.0 Alpha. PID: 8868
+2025-05-30 15:49:13,584 - INFO - [main_app.__init__:186] - Dependencies: FW: 1.1.1, Torch: 2.7.0+cpu, Librosa: 0.11.0
+2025-05-30 15:49:13,584 - INFO - [main_app.check_dependencies_on_startup:484] - Checking dependencies...
+2025-05-30 15:49:15,578 - INFO - [main_app.check_dependencies_on_startup:490] - External dependencies (yt-dlp, ffmpeg) OK.
