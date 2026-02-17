@@ -53,15 +53,26 @@ class Ingest:
         if self.tidal_session: return True
 
         try:
-            self.tidal_session = tidalapi.Session()
-            token = self.config['tidal'].get('token')
-            # Mock login if token provided, otherwise standard login flow would be needed
-            # For this implementation, we assume a valid session or token is handled
-            # Since tidalapi requires OAuth usually, we'll placeholder this.
-            if token:
-                # This part depends on tidalapi version and auth method
-                # self.tidal_session.load_oauth_session(...)
+            # Initialize Session with config if available
+            config = tidalapi.Config()
+            if self.config['tidal'].get('quality'):
+                # Map config quality to tidalapi Quality enum or string
+                # This is approximate
                 pass
+
+            self.tidal_session = tidalapi.Session(config=config)
+
+            token = self.config['tidal'].get('token')
+            client_id = self.config['tidal'].get('client_id')
+            client_secret = self.config['tidal'].get('client_secret')
+
+            # If explicit credentials provided, potentially used for login
+            # Real tidalapi usually uses load_oauth_session with token details
+            if token and client_id and client_secret:
+                # Placeholder for loading session
+                # self.tidal_session.load_oauth_session(token_type, access_token, refresh_token, expiry_time)
+                pass
+
             return True
         except Exception as e:
             logger.error(f"Tidal init failed: {e}")

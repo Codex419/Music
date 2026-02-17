@@ -204,6 +204,8 @@ class MusicDownloaderApp(TK_ROOT):
         lf_tidal = ttk.LabelFrame(self.tab_settings, text="Tidal")
         lf_tidal.pack(fill=tk.X, padx=5, pady=5)
         add_setting(lf_tidal, "Token", ['tidal', 'token'])
+        add_setting(lf_tidal, "Client ID", ['tidal', 'client_id'])
+        add_setting(lf_tidal, "Client Secret", ['tidal', 'client_secret'])
         add_setting(lf_tidal, "Quality", ['tidal', 'quality'], ["LOW", "HIGH", "LOSSLESS", "HI_RES"])
 
         # Deezer
@@ -268,7 +270,7 @@ class MusicDownloaderApp(TK_ROOT):
         # Restore defaults
         default_config = {
             "paths": {"music_dir": "Output/Music", "video_dir": "Output/Music Videos", "staging_dir": "Output/Staging"},
-            "tidal": {"token": "", "quality": "HI_RES"},
+            "tidal": {"token": "", "client_id": "", "client_secret": "", "quality": "HI_RES"},
             "deezer": {"arl": "", "quality": "FLAC"},
             "youtube": {"cookies_path": "", "token": ""},
             "web_dl": {"audio_format": "flac", "video_format": "mp4", "download_delay": 2},

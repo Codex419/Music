@@ -5,6 +5,8 @@ paths:
 tidal:
   quality: HI_RES
   token: ''
+  client_id: ''
+  client_secret: ''
 deezer:
   arl: ''
   quality: FLAC
