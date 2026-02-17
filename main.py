@@ -5,6 +5,8 @@ import queue
 import logging
 import yaml
 import time
+import argparse
+import sys
 from pathlib import Path
 
 # Import Modules
@@ -577,10 +579,26 @@ class MusicDownloaderApp(TK_ROOT):
                 if self.interactive_mode.get():
                     # Format detailed info
                     if track:
+                        # Safe attribute access helper
+                        def get_attr(obj, attrs):
+                            for a in attrs:
+                                if hasattr(obj, a): return getattr(obj, a)
+                            return "Unknown"
+
+                        t_name = get_attr(track, ['name', 'title'])
+
+                        a_name = "Unknown"
+                        if hasattr(track, 'artist'):
+                            a_name = get_attr(track.artist, ['name', 'title'])
+
+                        al_name = "Unknown"
+                        if hasattr(track, 'album'):
+                            al_name = get_attr(track.album, ['name', 'title'])
+
                         details = (f"Source: {source}\n"
-                                   f"Title: {track.name if hasattr(track, 'name') else track.title}\n"
-                                   f"Artist: {track.artist.name if hasattr(track, 'artist') else 'Unknown'}\n"
-                                   f"Album: {track.album.name if hasattr(track, 'album') else 'Unknown'}")
+                                   f"Title: {t_name}\n"
+                                   f"Artist: {a_name}\n"
+                                   f"Album: {al_name}")
                     else:
                         details = "No match found."
 
@@ -677,5 +695,102 @@ class MusicDownloaderApp(TK_ROOT):
         logger.info("Queue finished.")
 
 if __name__ == "__main__":
-    app = MusicDownloaderApp()
-    app.mainloop()
+    # Check for CLI arguments
+    parser = argparse.ArgumentParser(description="Music Downloader CLI")
+    parser.add_argument("--search", help="Query to search (Artist, Song, etc.)")
+    parser.add_argument("--type", choices=["song", "artist", "album", "url"], default="song", help="Type of search")
+    parser.add_argument("--limit", type=int, default=3, help="Limit number of items to process (for batch)")
+    parser.add_argument("--no-gui", action="store_true", help="Run without GUI")
+
+    args, unknown = parser.parse_known_args()
+
+    if args.no_gui or args.search:
+        # CLI Mode
+        logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+        logger.info("Starting in CLI Mode")
+
+        # Load Config directly
+        config = {}
+        try:
+            with open("config.yaml", 'r') as f:
+                config = yaml.safe_load(f)
+        except Exception as e:
+            logger.error(f"Config load error: {e}")
+
+        app_logic = MusicDownloaderApp()
+        # Bypass GUI loop, directly use logic
+        # We need to adapt add_to_queue to work without GUI variables
+
+        query = args.search
+        if not query:
+            logger.error("No search query provided.")
+            sys.exit(1)
+
+        logger.info(f"CLI Search: {query} ({args.type})")
+
+        # Simulate adding to queue
+        # Since logic is coupled with GUI treeview, we might need to refactor or mock the treeview
+        # For this implementation, we will manually populate the job_queue and run process_queue
+
+        # Expand based on type
+        items_to_process = []
+        if args.type == "url" or "http" in query:
+             if "spotify" in query and ("playlist" in query or "album" in query):
+                 tracks = app_logic.ingest.parse_spotify_playlist(query)
+                 items_to_process.extend(tracks[:args.limit])
+             else:
+                 items_to_process.append(query) # Single URL
+        elif args.type == "artist":
+             tracks = app_logic.ingest.expand_artist(query)
+             items_to_process.extend(tracks[:args.limit])
+        elif args.type == "album":
+             tracks = app_logic.ingest.expand_album(query)
+             items_to_process.extend(tracks[:args.limit])
+        else:
+             items_to_process.append(query)
+
+        # Queue items
+        # We need to insert into treeview because process_queue reads from it
+        # But treeview requires GUI.
+        # Refactoring process_queue to take a data object instead of reading treeview is best.
+        # But given constraints, we will override process_queue or mock treeview data.
+
+        # Better: Create a headless processor method in MusicDownloaderApp
+
+        # Mocking the tree data structure
+        # item_id -> values
+        mock_tree_data = {}
+
+        for i, item in enumerate(items_to_process):
+            # Parse simple "Artist - Song" or use raw
+            parts = item.split(" - ")
+            artist = parts[0].strip() if len(parts) > 1 else "?"
+            song = parts[1].strip() if len(parts) > 1 else item
+
+            item_id = f"cli_{i}"
+            mock_tree_data[item_id] = {'values': [song, artist, "?", "Queued"]}
+            app_logic.job_queue.put(item_id)
+
+        # Patch app_logic.tree to behave like our mock
+        class MockTree:
+            def item(self, item_id, values=None):
+                if values:
+                    mock_tree_data[item_id]['values'] = values
+                    logger.info(f"Status Update [{item_id}]: {values[3]}")
+                return mock_tree_data.get(item_id, {})
+
+        app_logic.tree = MockTree()
+        app_logic.update_status = lambda item_id, status: app_logic.tree.item(item_id, values=(mock_tree_data[item_id]['values'][0], mock_tree_data[item_id]['values'][1], "?", status))
+
+        # Disable interactive mode for CLI
+        app_logic.interactive_mode.set(False)
+
+        # Run processing
+        logger.info(f"Processing {len(items_to_process)} items...")
+        app_logic.stop_event.clear()
+        app_logic.process_queue()
+        logger.info("CLI Run Complete.")
+
+    else:
+        app = MusicDownloaderApp()
+        app.mainloop()
