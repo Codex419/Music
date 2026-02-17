@@ -1,0 +1,12 @@
+tkinterdnd2
+tidalapi
+deezer-python
+yt-dlp
+faster-whisper
+mutagen
+requests
+Pillow
+pyyaml
+beautifulsoup4
+ctranslate2
+musicbrainzngs

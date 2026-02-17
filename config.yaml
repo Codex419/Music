@@ -1,0 +1,30 @@
+# Music Downloader Configuration
+
+paths:
+  music_dir: "Output/Music"
+  video_dir: "Output/Music Videos"
+  staging_dir: "Output/Staging"
+
+tidal:
+  token: ""
+  quality: "HI_RES"  # Options: LOW, HIGH, LOSSLESS, HI_RES
+
+deezer:
+  arl: ""
+  quality: "FLAC"    # Options: MP3_128, MP3_320, FLAC
+
+youtube:
+  token: ""          # Optional: OAuth token if needed
+  cookies_path: ""   # Path to cookies.txt for yt-dlp
+
+web_dl:
+  audio_format: "flac"
+  video_format: "mp4"
+  download_delay: 2  # Seconds between downloads to avoid rate limits
+
+ai:
+  model_size: "medium"       # Options: tiny, base, small, medium, large-v2
+  precision: "int8"          # Options: float16, int8_float16, int8
+  device: "auto"             # Options: cpu, cuda, auto
+  vad_filter: true
+  beam_size: 5
