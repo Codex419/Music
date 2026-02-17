@@ -128,13 +128,24 @@ class MusicDownloaderApp(TK_ROOT):
         control_frame.pack(fill=tk.X, padx=5, pady=5)
 
         ttk.Label(control_frame, text="Search/Add:").pack(side=tk.LEFT)
+        self.search_type_var = tk.StringVar(value="Song")
+        search_types = ["Song", "Artist", "Album", "Url"]
+        ttk.OptionMenu(control_frame, self.search_type_var, search_types[0], *search_types).pack(side=tk.LEFT, padx=2)
+
         self.search_var = tk.StringVar()
         entry = ttk.Entry(control_frame, textvariable=self.search_var, width=40)
         entry.pack(side=tk.LEFT, padx=5)
         entry.bind("<Return>", lambda e: self.add_to_queue())
 
         ttk.Button(control_frame, text="Add", command=self.add_to_queue).pack(side=tk.LEFT, padx=2)
-        ttk.Button(control_frame, text="Import URL", command=self.import_url).pack(side=tk.LEFT, padx=2)
+
+        # Import Menu
+        import_btn = ttk.Menubutton(control_frame, text="Import")
+        import_menu = tk.Menu(import_btn, tearoff=0)
+        import_menu.add_command(label="Spotify/YouTube URL", command=self.import_url)
+        import_menu.add_command(label="YouTube Cookies (Instructions)", command=self.show_cookies_help)
+        import_btn.configure(menu=import_menu)
+        import_btn.pack(side=tk.LEFT, padx=2)
 
         # Interactive Mode Checkbox
         ttk.Checkbutton(control_frame, text="Interactive Mode", variable=self.interactive_mode).pack(side=tk.LEFT, padx=10)
@@ -187,26 +198,120 @@ class MusicDownloaderApp(TK_ROOT):
         lf_deezer.pack(fill=tk.X, padx=5, pady=5)
         add_setting(lf_deezer, "ARL", ['deezer', 'arl'])
 
-        # Save Button
-        ttk.Button(self.tab_settings, text="Save Configuration", command=self.save_config).pack(pady=10)
+        # YouTube
+        lf_youtube = ttk.LabelFrame(self.tab_settings, text="YouTube")
+        lf_youtube.pack(fill=tk.X, padx=5, pady=5)
+        add_setting(lf_youtube, "Cookies Path", ['youtube', 'cookies_path'])
+
+        # AI
+        lf_ai = ttk.LabelFrame(self.tab_settings, text="AI")
+        lf_ai.pack(fill=tk.X, padx=5, pady=5)
+        add_setting(lf_ai, "Model Size", ['ai', 'model_size'])
+        add_setting(lf_ai, "Precision", ['ai', 'precision'])
+        add_setting(lf_ai, "Device", ['ai', 'device'])
+        add_setting(lf_ai, "Beam Size", ['ai', 'beam_size'])
+
+        # Formats
+        lf_fmt = ttk.LabelFrame(self.tab_settings, text="Formats")
+        lf_fmt.pack(fill=tk.X, padx=5, pady=5)
+        add_setting(lf_fmt, "Audio Format", ['formats', 'audio_format'])
+        add_setting(lf_fmt, "Video Format", ['formats', 'video_format'])
+        add_setting(lf_fmt, "Video Res", ['formats', 'video_resolution'])
+
+        # UI
+        lf_ui = ttk.LabelFrame(self.tab_settings, text="UI")
+        lf_ui.pack(fill=tk.X, padx=5, pady=5)
+        add_setting(lf_ui, "Theme (Dark/Light)", ['ui', 'theme'])
+        add_setting(lf_ui, "Fallback Enabled", ['ui', 'fallback_enabled'])
+        add_setting(lf_ui, "Search Results", ['ui', 'search_results'])
+
+        # Save & Repair
+        btn_frame = ttk.Frame(self.tab_settings)
+        btn_frame.pack(pady=10)
+        ttk.Button(btn_frame, text="Save Configuration", command=self.save_config).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="Repair Config", command=self.repair_config).pack(side=tk.LEFT, padx=5)
+
+    def repair_config(self):
+        # Restore defaults
+        default_config = {
+            "paths": {"music_dir": "Output/Music", "video_dir": "Output/Music Videos", "staging_dir": "Output/Staging"},
+            "tidal": {"token": "", "quality": "HI_RES"},
+            "deezer": {"arl": "", "quality": "FLAC"},
+            "youtube": {"cookies_path": "", "token": ""},
+            "web_dl": {"audio_format": "flac", "video_format": "mp4", "download_delay": 2},
+            "ai": {"model_size": "medium", "precision": "int8", "device": "auto", "vad_filter": True, "beam_size": 5},
+            "ui": {"theme": "Dark", "search_results": 5, "fallback_enabled": True},
+            "formats": {"audio_format": "flac", "video_format": "mp4", "video_resolution": "1080p", "lyric_format": "lrc", "subtitle_format": "srt"}
+        }
+        self.config = default_config
+        self.save_config()
+        messagebox.showinfo("Config Repair", "Configuration restored to defaults.")
 
     def setup_help_tab(self):
+        # Create a canvas with scrollbar for help text
+        canvas = tk.Canvas(self.tab_help)
+        scrollbar = ttk.Scrollbar(self.tab_help, orient="vertical", command=canvas.yview)
+        scrollable_frame = ttk.Frame(canvas)
+
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+
         text = """
         Music Downloader Help
+        =====================
 
-        1. Tokens: Get your Tidal/Deezer tokens and enter them in Settings.
-        2. Queue: Type 'Artist - Song' or paste a Spotify URL to add to queue.
-        3. Processing: Click 'Start Processing' to begin the pipeline.
+        1. Configuration & Tokens
+        -------------------------
+        The application works with EITHER Tidal OR Deezer. You do not need both.
 
-        Pipeline:
-        - Search Tidal (Priority) -> Deezer (Fallback) for Audio (FLAC).
-        - Transcribe Audio to LRC.
-        - Search YouTube for Music Video.
-        - Sync Metadata from Audio to Video.
-        - Transcribe Video to SRT.
-        - Archive to structured folders.
+        [Tidal]
+        - To get a token, you typically need to sniff traffic or use a script.
+        - Common method: Use 'Tidal-Media-Downloader' auth script or inspect web headers.
+        - Enter token in Settings > Tidal.
+
+        [Deezer]
+        - Log in to Deezer in your browser.
+        - Open Developer Tools (F12) > Application > Cookies.
+        - Find the 'arl' cookie. Copy its value.
+        - Enter it in Settings > Deezer > ARL.
+
+        [YouTube]
+        - Required for Music Video downloads.
+        - To avoid rate limits/age restrictions, use cookies.
+        - Install 'Get cookies.txt LOCALLY' extension.
+        - Download cookies.txt from YouTube while logged in.
+        - Place in app folder or point to it in Settings.
+
+        2. Usage
+        --------
+        - Queue Tab:
+          - Select Search Type (Song, Artist, Album, Url).
+          - Type query or paste URL.
+          - Click 'Add'.
+        - Import Menu:
+          - 'Spotify/YouTube URL': Paste links to playlists/albums.
+        - Interactive Mode:
+          - Check this to manually approve/modify matches before downloading.
+
+        3. Pipeline
+        -----------
+        1. Search Audio: Tidal -> Deezer -> MusicBrainz (Fallback).
+        2. Download Audio: Best available quality (FLAC/Hi-Res).
+        3. Transcribe: AI generates .lrc lyrics.
+        4. Search Video: YouTube (Official Music Video).
+        5. Sync: Copy tags/art from Audio to Video.
+        6. Transcribe Video: AI generates .srt subtitles.
+        7. Archive: Move to Output folder sorted by Artist/Album.
         """
-        lbl = ttk.Label(self.tab_help, text=text, justify=tk.LEFT, font=("Consolas", 10))
+        lbl = ttk.Label(scrollable_frame, text=text, justify=tk.LEFT, font=("Consolas", 10))
         lbl.pack(padx=10, pady=10, anchor=tk.NW)
 
     def get_config_value(self, keys):
@@ -225,59 +330,73 @@ class MusicDownloaderApp(TK_ROOT):
         query = item or self.search_var.get()
         if not query: return
 
-        # Identify if URL or Text
-        if "spotify.com" in query:
-            if "playlist" in query or "album" in query:
-                # Expand Playlist/Album
-                tracks = self.ingest.parse_spotify_playlist(query)
-                for t in tracks:
-                    parts = t.split(" - ")
-                    artist = parts[0].strip() if len(parts) > 1 else "?"
-                    song = parts[1].strip() if len(parts) > 1 else t
-                    self.tree.insert("", tk.END, values=(song, artist, "?", "Queued"))
-                logger.info(f"Expanded {len(tracks)} tracks from Spotify URL")
-            else:
-                meta = self.ingest.parse_spotify_url(query)
-                if meta:
-                    display = f"{meta['artist']} - {meta['title']}"
-                    self.tree.insert("", tk.END, values=(meta['title'], meta['artist'], "?", "Queued"))
-                    logger.info(f"Added from URL: {display}")
-                else:
-                    logger.error("Failed to parse Spotify URL")
-            self.search_var.set("")
+        search_type = self.search_type_var.get()
 
-        elif query.lower().startswith("artist:"):
-            # Expand Artist
-            artist_name = query[7:].strip()
-            tracks = self.ingest.expand_artist(artist_name)
+        # Override type if URL detected
+        if "http" in query:
+            search_type = "Url"
+
+        if search_type == "Url":
+            if "spotify.com" in query:
+                if "playlist" in query or "album" in query:
+                    # Expand Playlist/Album
+                    tracks = self.ingest.parse_spotify_playlist(query)
+                    for t in tracks:
+                        parts = t.split(" - ")
+                        artist = parts[0].strip() if len(parts) > 1 else "?"
+                        song = parts[1].strip() if len(parts) > 1 else t
+                        self.tree.insert("", tk.END, values=(song, artist, "?", "Queued"))
+                    logger.info(f"Expanded {len(tracks)} tracks from Spotify URL")
+                else:
+                    meta = self.ingest.parse_spotify_url(query)
+                    if meta:
+                        display = f"{meta['artist']} - {meta['title']}"
+                        self.tree.insert("", tk.END, values=(meta['title'], meta['artist'], "?", "Queued"))
+                        logger.info(f"Added from URL: {display}")
+                    else:
+                        logger.error("Failed to parse Spotify URL")
+            elif "youtube.com" in query or "youtu.be" in query:
+                 # Assume YouTube import (Music Video or Playlist)
+                 # For simplicity, treat as song
+                 self.tree.insert("", tk.END, values=(query, "YouTube", "?", "Queued"))
+                 logger.info(f"Added YouTube URL: {query}")
+
+        elif search_type == "Artist":
+            tracks = self.ingest.expand_artist(query)
             for t in tracks:
                 parts = t.split(" - ")
                 artist = parts[0].strip() if len(parts) > 1 else "?"
                 song = parts[1].strip() if len(parts) > 1 else t
                 self.tree.insert("", tk.END, values=(song, artist, "?", "Queued"))
-            logger.info(f"Expanded {len(tracks)} tracks for Artist: {artist_name}")
-            self.search_var.set("")
+            logger.info(f"Expanded {len(tracks)} tracks for Artist: {query}")
 
-        elif query.lower().startswith("album:"):
-            # Expand Album
-            album_name = query[6:].strip()
-            tracks = self.ingest.expand_album(album_name)
+        elif search_type == "Album":
+            tracks = self.ingest.expand_album(query)
             for t in tracks:
                  parts = t.split(" - ")
                  artist = parts[0].strip() if len(parts) > 1 else "?"
                  song = parts[1].strip() if len(parts) > 1 else t
                  self.tree.insert("", tk.END, values=(song, artist, "?", "Queued"))
-            logger.info(f"Expanded {len(tracks)} tracks for Album: {album_name}")
-            self.search_var.set("")
+            logger.info(f"Expanded {len(tracks)} tracks for Album: {query}")
 
-        else:
+        else: # Song
             # Simple text entry
             parts = query.split("-")
             artist = parts[0].strip() if len(parts) > 1 else "?"
             song = parts[1].strip() if len(parts) > 1 else query
             self.tree.insert("", tk.END, values=(song, artist, "?", "Queued"))
-            self.search_var.set("")
             logger.info(f"Added to queue: {query}")
+
+        self.search_var.set("")
+
+    def show_cookies_help(self):
+        msg = ("To import YouTube Cookies:\n\n"
+               "1. Install 'Get cookies.txt LOCALLY' extension for Chrome/Firefox.\n"
+               "2. Go to YouTube, log in.\n"
+               "3. Click extension to download 'cookies.txt'.\n"
+               "4. Place 'cookies.txt' in the application folder.\n"
+               "5. Go to Settings > YouTube and verify the path.")
+        messagebox.showinfo("YouTube Cookies Instructions", msg)
 
     def import_url(self):
         url = filedialog.askstring("Import", "Enter Spotify URL or Playlist:")
