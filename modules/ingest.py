@@ -97,11 +97,17 @@ class Ingest:
         if not self._init_tidal(): return None
 
         try:
-            # Updated: tidalapi.media might not exist or models arg changed.
-            # Using standard search pattern for recent tidalapi versions
-            # tidalapi 0.7+ usually exposes models at top level or via session
-            # We use string 'track' or imported model class
-            results = self.tidal_session.search(query, models=[tidalapi.Track])
+            # Attempt search using string types if object passing fails (400 error)
+            # Some versions prefer 'TRACK' or 'tracks'
+            try:
+                results = self.tidal_session.search(query, models=[tidalapi.Track])
+            except Exception:
+                # Fallback to older/simpler method signature if available or string model
+                # Note: tidalapi usually requires model classes
+                logger.warning("Retrying Tidal search with simplified params...")
+                # Try offset/limit if implicit defaults are failing
+                results = self.tidal_session.search(query, models=[tidalapi.Track], limit=5)
+
             if results['tracks']:
                 return results['tracks'][0]
         except Exception as e:

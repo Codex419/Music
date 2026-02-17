@@ -47,7 +47,7 @@ class Governance:
     def archive_audio(self, filepath: str, metadata: dict) -> str:
         """
         Move audio file and its accompanying .lrc file to the final structure:
-        Music > Artist > Album (Year) > Artist - Song.flac
+        Music > Artist > Album [Release Year] > Artist - Song.Format
         """
         if not self.validate_metadata(metadata):
             raise ValueError(f"Invalid metadata for {filepath}: {metadata}")
@@ -57,8 +57,8 @@ class Governance:
         title = self.sanitize_filename(metadata['title'])
         year = self._get_year(metadata['date'])
 
-        # Construct path: Music/Artist/Album (Year)/
-        album_folder = f"{album} ({year})"
+        # Construct path: Music/Artist/Album [Year]/
+        album_folder = f"{album} [{year}]"
         dest_dir = self.music_base_path / artist / album_folder
         dest_dir.mkdir(parents=True, exist_ok=True)
 
@@ -81,7 +81,7 @@ class Governance:
     def archive_video(self, filepath: str, metadata: dict) -> str:
         """
         Move video file and its accompanying .srt file to the final structure:
-        Music Videos > Artist - Song (Year).mp4
+        Music Videos > Artist - Song.Format
         """
         if not self.validate_metadata(metadata):
             # Fallback if metadata is incomplete but we have Artist/Title from search
@@ -90,11 +90,10 @@ class Governance:
 
         artist = self.sanitize_filename(metadata['artist'])
         title = self.sanitize_filename(metadata['title'])
-        year = self._get_year(metadata.get('date', '0000'))
 
-        # Construct filename: Artist - Song (Year).ext
+        # Construct filename: Artist - Song.ext
         ext = Path(filepath).suffix
-        filename = f"{artist} - {title} ({year}){ext}"
+        filename = f"{artist} - {title}{ext}"
         dest_path = self.video_base_path / filename
 
         # Move Video File
@@ -103,7 +102,7 @@ class Governance:
         # Check for and move .srt file if it exists
         srt_source = Path(filepath).with_suffix('.srt')
         if srt_source.exists():
-            srt_dest = self.video_base_path / f"{artist} - {title} ({year}).srt"
+            srt_dest = self.video_base_path / f"{artist} - {title}.srt"
             shutil.move(srt_source, srt_dest)
 
         return str(dest_path)

@@ -222,7 +222,7 @@ class MusicDownloaderApp(TK_ROOT):
         # AI
         lf_ai = ttk.LabelFrame(self.tab_settings, text="AI")
         lf_ai.pack(fill=tk.X, padx=5, pady=5)
-        add_setting(lf_ai, "Model Size", ['ai', 'model_size'], ["tiny", "base", "small", "medium", "large-v2"])
+        add_setting(lf_ai, "Model Size", ['ai', 'model_size'], ["tiny", "base", "small", "medium", "large-v2", "turbo"])
         add_setting(lf_ai, "Precision", ['ai', 'precision'], ["float16", "int8_float16", "int8"])
         add_setting(lf_ai, "Device", ['ai', 'device'], ["cpu", "cuda", "auto"])
         add_setting(lf_ai, "Beam Size", ['ai', 'beam_size'])
@@ -617,9 +617,21 @@ class MusicDownloaderApp(TK_ROOT):
                 if track:
                     # Attempt to extract metadata from track object if available
                     try:
-                        if hasattr(track, 'artist'): metadata['artist'] = track.artist.name
-                        if hasattr(track, 'album'): metadata['album'] = track.album.name
-                        if hasattr(track, 'title'): metadata['title'] = track.title
+                        if hasattr(track, 'artist'):
+                            metadata['artist'] = track.artist.name
+
+                        if hasattr(track, 'album'):
+                            # Handle Deezer 'title' vs Tidal 'name'
+                            if hasattr(track.album, 'title'):
+                                metadata['album'] = track.album.title
+                            elif hasattr(track.album, 'name'):
+                                metadata['album'] = track.album.name
+
+                        if hasattr(track, 'title'):
+                            metadata['title'] = track.title
+                        elif hasattr(track, 'name'):
+                            metadata['title'] = track.name
+
                     except Exception as meta_e:
                         logger.warning(f"Error extracting metadata from track object: {meta_e}")
 

@@ -4,9 +4,9 @@ paths:
   video_dir: Output/Music Videos
 tidal:
   quality: HI_RES
-  token: ''
-  client_id: ''
-  client_secret: ''
+  token: '3918805793~L21lZGlhdHJhY2tzL0dpc0lBeEluT1RBNE9HRmxPRGczWkdZMVlUVTFOamMzTlRKbFlXTTVOalptTjJOaFpEZGZOakV1YlhBMEloc2RBQUNBUUNBQktoRGJhaWhkR3VReFhHWEZ4RW51d0h4YU1nQS8qfmQwMDA0MWU2YzM3NDZiOWM2MDQ0OWE4ZWEyNmU1NTBlMGIwMjQzNzg='
+  client_id: 'x2a4kYWQrqVTUO39'
+  client_secret: 'cgYDicHJTxchJkGFrS5dJ0nXWOKPeznjARc7xJ8a4K8='
 deezer:
   arl: ''
   quality: FLAC
@@ -20,14 +20,13 @@ web_dl:
 ai:
   beam_size: 5
   device: auto
-  model_size: medium
+  model_size: large-v2
   precision: int8
   vad_filter: true
 ui:
   theme: Dark
   search_results: 5
   fallback_enabled: true
-  repair_config: false
 formats:
   audio_format: flac
   video_format: mp4
