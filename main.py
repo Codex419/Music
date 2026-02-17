@@ -170,16 +170,29 @@ class MusicDownloaderApp(TK_ROOT):
             self.tree.dnd_bind('<<Drop>>', self.handle_drop)
 
     def setup_settings_tab(self):
-        # Helper to create label+entry
-        def add_setting(parent, label, key_path):
+        # Helper to create label+entry/combobox
+        def add_setting(parent, label, key_path, options=None):
             frame = ttk.Frame(parent)
             frame.pack(fill=tk.X, pady=2)
             ttk.Label(frame, text=label, width=20).pack(side=tk.LEFT)
-            var = tk.StringVar(value=str(self.get_config_value(key_path)))
-            entry = ttk.Entry(frame, textvariable=var)
-            entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+            val = self.get_config_value(key_path)
+            var = tk.StringVar(value=str(val))
+
+            if options:
+                widget = ttk.Combobox(frame, textvariable=var, values=options, state="readonly")
+            else:
+                widget = ttk.Entry(frame, textvariable=var)
+
+            widget.pack(side=tk.LEFT, fill=tk.X, expand=True)
+
             # Trace change to update config
-            var.trace_add('write', lambda *args: self.set_config_value(key_path, var.get()))
+            def on_change(*args):
+                self.set_config_value(key_path, var.get())
+                if key_path == ['ui', 'theme']:
+                    self.apply_theme(var.get())
+
+            var.trace_add('write', on_change)
 
         # Paths
         lf_paths = ttk.LabelFrame(self.tab_settings, text="Paths")
@@ -191,12 +204,13 @@ class MusicDownloaderApp(TK_ROOT):
         lf_tidal = ttk.LabelFrame(self.tab_settings, text="Tidal")
         lf_tidal.pack(fill=tk.X, padx=5, pady=5)
         add_setting(lf_tidal, "Token", ['tidal', 'token'])
-        add_setting(lf_tidal, "Quality", ['tidal', 'quality'])
+        add_setting(lf_tidal, "Quality", ['tidal', 'quality'], ["LOW", "HIGH", "LOSSLESS", "HI_RES"])
 
         # Deezer
         lf_deezer = ttk.LabelFrame(self.tab_settings, text="Deezer")
         lf_deezer.pack(fill=tk.X, padx=5, pady=5)
         add_setting(lf_deezer, "ARL", ['deezer', 'arl'])
+        add_setting(lf_deezer, "Quality", ['deezer', 'quality'], ["MP3_128", "MP3_320", "FLAC"])
 
         # YouTube
         lf_youtube = ttk.LabelFrame(self.tab_settings, text="YouTube")
@@ -206,24 +220,43 @@ class MusicDownloaderApp(TK_ROOT):
         # AI
         lf_ai = ttk.LabelFrame(self.tab_settings, text="AI")
         lf_ai.pack(fill=tk.X, padx=5, pady=5)
-        add_setting(lf_ai, "Model Size", ['ai', 'model_size'])
-        add_setting(lf_ai, "Precision", ['ai', 'precision'])
-        add_setting(lf_ai, "Device", ['ai', 'device'])
+        add_setting(lf_ai, "Model Size", ['ai', 'model_size'], ["tiny", "base", "small", "medium", "large-v2"])
+        add_setting(lf_ai, "Precision", ['ai', 'precision'], ["float16", "int8_float16", "int8"])
+        add_setting(lf_ai, "Device", ['ai', 'device'], ["cpu", "cuda", "auto"])
         add_setting(lf_ai, "Beam Size", ['ai', 'beam_size'])
 
         # Formats
         lf_fmt = ttk.LabelFrame(self.tab_settings, text="Formats")
         lf_fmt.pack(fill=tk.X, padx=5, pady=5)
-        add_setting(lf_fmt, "Audio Format", ['formats', 'audio_format'])
-        add_setting(lf_fmt, "Video Format", ['formats', 'video_format'])
-        add_setting(lf_fmt, "Video Res", ['formats', 'video_resolution'])
+        add_setting(lf_fmt, "Audio Format", ['formats', 'audio_format'], ["flac", "mp3", "aac", "wav"])
+        add_setting(lf_fmt, "Video Format", ['formats', 'video_format'], ["mp4", "mkv", "webm"])
+        add_setting(lf_fmt, "Video Res", ['formats', 'video_resolution'], ["2160p", "1440p", "1080p", "720p", "480p"])
 
         # UI
         lf_ui = ttk.LabelFrame(self.tab_settings, text="UI")
         lf_ui.pack(fill=tk.X, padx=5, pady=5)
-        add_setting(lf_ui, "Theme (Dark/Light)", ['ui', 'theme'])
-        add_setting(lf_ui, "Fallback Enabled", ['ui', 'fallback_enabled'])
+        add_setting(lf_ui, "Theme", ['ui', 'theme'], ["Dark", "Light"])
         add_setting(lf_ui, "Search Results", ['ui', 'search_results'])
+
+    def apply_theme(self, theme_name):
+        style = ttk.Style()
+        if theme_name == "Dark":
+            bg_color = "#2E2E2E"
+            fg_color = "#FFFFFF"
+            field_bg = "#404040"
+            style.theme_use('clam')
+            style.configure(".", background=bg_color, foreground=fg_color, fieldbackground=field_bg)
+            style.configure("TLabel", background=bg_color, foreground=fg_color)
+            style.configure("TButton", background="#333333", foreground=fg_color, bordercolor="#555555")
+            style.configure("TEntry", fieldbackground=field_bg, foreground=fg_color)
+            style.configure("Treeview", background=field_bg, foreground=fg_color, fieldbackground=field_bg)
+            style.map("Treeview", background=[('selected', '#007ACC')], foreground=[('selected', 'white')])
+            self.configure(background=bg_color)
+        else:
+            style.theme_use('clam') # Reset to standard/light-ish
+            # Explicitly reset colors if needed, or just let 'clam' default handle it
+            style.configure(".", background="#F0F0F0", foreground="black", fieldbackground="white")
+            self.configure(background="#F0F0F0")
 
         # Save & Repair
         btn_frame = ttk.Frame(self.tab_settings)
@@ -403,7 +436,7 @@ class MusicDownloaderApp(TK_ROOT):
         if url:
             self.add_to_queue(url)
 
-    def ask_user_approval(self, query, track_info):
+    def ask_user_approval(self, query, track_info, thumbnail_url=None):
         """Show popup in main thread and wait for result."""
         self.user_decision = None
         self.user_input_event.clear()
@@ -412,10 +445,25 @@ class MusicDownloaderApp(TK_ROOT):
             # Create custom dialog
             dialog = tk.Toplevel(self)
             dialog.title("Approval Required")
-            dialog.geometry("400x200")
+            dialog.geometry("500x400") # Increased size for details
 
-            ttk.Label(dialog, text=f"Query: {query}").pack(pady=5)
-            ttk.Label(dialog, text=f"Found: {track_info}").pack(pady=5)
+            # Details Frame
+            info_frame = ttk.Frame(dialog)
+            info_frame.pack(pady=10, fill=tk.BOTH, expand=True)
+
+            ttk.Label(info_frame, text=f"Query: {query}", font=("Segoe UI", 10, "bold")).pack(pady=2)
+            ttk.Label(info_frame, text=f"Match Found:", font=("Segoe UI", 9)).pack(pady=(5,0))
+
+            # Display multiline info
+            details_text = tk.Text(info_frame, height=8, width=50, relief=tk.FLAT, background="#f0f0f0")
+            details_text.insert(tk.END, track_info)
+            details_text.config(state=tk.DISABLED)
+            details_text.pack(pady=5, padx=10)
+
+            # Thumbnail (Placeholder logic - requires async fetch in non-GUI thread usually)
+            # For simplicity, we just show a label if URL exists
+            if thumbnail_url:
+                ttk.Label(info_frame, text=f"[Thumbnail URL: {thumbnail_url}]").pack(pady=5)
 
             btn_frame = ttk.Frame(dialog)
             btn_frame.pack(pady=10)
@@ -435,7 +483,7 @@ class MusicDownloaderApp(TK_ROOT):
                 if new_query:
                     self.user_decision = f"modify:{new_query}"
                 else:
-                    self.user_decision = "skip" # Cancel acts as skip
+                    self.user_decision = "skip"
                 self.user_input_event.set()
                 dialog.destroy()
 
@@ -448,7 +496,7 @@ class MusicDownloaderApp(TK_ROOT):
             self.wait_window(dialog)
 
         self.after(0, show_dialog)
-        self.user_input_event.wait() # Block worker thread
+        self.user_input_event.wait()
         return self.user_decision
 
     def handle_drop(self, event):
@@ -525,8 +573,16 @@ class MusicDownloaderApp(TK_ROOT):
 
                 # Interactive Approval
                 if self.interactive_mode.get():
-                    track_info = f"{source}: {track.name if track else 'Not Found'}"
-                    decision = self.ask_user_approval(query, track_info)
+                    # Format detailed info
+                    if track:
+                        details = (f"Source: {source}\n"
+                                   f"Title: {track.name if hasattr(track, 'name') else track.title}\n"
+                                   f"Artist: {track.artist.name if hasattr(track, 'artist') else 'Unknown'}\n"
+                                   f"Album: {track.album.name if hasattr(track, 'album') else 'Unknown'}")
+                    else:
+                        details = "No match found."
+
+                    decision = self.ask_user_approval(query, details)
 
                     if decision == "skip":
                         self.update_status(item_id, "Skipped by User")

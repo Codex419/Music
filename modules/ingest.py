@@ -86,7 +86,11 @@ class Ingest:
         if not self._init_tidal(): return None
 
         try:
-            results = self.tidal_session.search(query, models=[tidalapi.media.Track])
+            # Updated: tidalapi.media might not exist or models arg changed.
+            # Using standard search pattern for recent tidalapi versions
+            # tidalapi 0.7+ usually exposes models at top level or via session
+            # We use string 'track' or imported model class
+            results = self.tidal_session.search(query, models=[tidalapi.Track])
             if results['tracks']:
                 return results['tracks'][0]
         except Exception as e:
@@ -98,11 +102,10 @@ class Ingest:
         tracks = []
         if self._init_tidal():
             try:
-                # Mock search for artist
-                search = self.tidal_session.search(artist_name, models=[tidalapi.media.Artist])
+                search = self.tidal_session.search(artist_name, models=[tidalapi.Artist])
                 if search['artists']:
                     artist = search['artists'][0]
-                    top_tracks = self.tidal_session.artist.get_top_tracks(artist.id)
+                    top_tracks = artist.get_top_tracks() # Helper method on Artist object
                     tracks = [f"{t.artist.name} - {t.name}" for t in top_tracks]
                     logger.info(f"Expanded Artist '{artist_name}' via Tidal: {len(tracks)} tracks")
             except Exception as e:
@@ -110,9 +113,11 @@ class Ingest:
 
         if not tracks and self._init_deezer():
             try:
-                results = self.deezer_client.search(artist_name, relation='artist')
-                if results:
-                    artist = results[0]
+                # Deezer: Use specialized search methods
+                # First find artist
+                artists = self.deezer_client.search_artists(artist_name)
+                if artists:
+                    artist = artists[0]
                     top_tracks = artist.get_top()
                     tracks = [f"{t.artist.name} - {t.title}" for t in top_tracks]
                     logger.info(f"Expanded Artist '{artist_name}' via Deezer: {len(tracks)} tracks")
@@ -125,10 +130,11 @@ class Ingest:
         tracks = []
         if self._init_tidal():
             try:
-                search = self.tidal_session.search(album_name, models=[tidalapi.media.Album])
+                search = self.tidal_session.search(album_name, models=[tidalapi.Album])
                 if search['albums']:
                     album = search['albums'][0]
-                    album_tracks = self.tidal_session.album.get_tracks(album.id)
+                    # Fetch tracks for album
+                    album_tracks = album.tracks()
                     tracks = [f"{t.artist.name} - {t.name}" for t in album_tracks]
                     logger.info(f"Expanded Album '{album_name}' via Tidal: {len(tracks)} tracks")
             except Exception as e:
@@ -136,9 +142,10 @@ class Ingest:
 
         if not tracks and self._init_deezer():
             try:
-                results = self.deezer_client.search(album_name, relation='album')
-                if results:
-                    album = results[0]
+                # Deezer search albums
+                albums = self.deezer_client.search_albums(album_name)
+                if albums:
+                    album = albums[0]
                     album_tracks = album.get_tracks()
                     tracks = [f"{t.artist.name} - {t.title}" for t in album_tracks]
                     logger.info(f"Expanded Album '{album_name}' via Deezer: {len(tracks)} tracks")
@@ -180,7 +187,13 @@ class Ingest:
         if not self._init_deezer(): return None
 
         try:
-            results = self.deezer_client.search(query, relation='track')
+            # Use search() with default params, filter results manually if needed
+            # or use search_tracks specifically if available
+            if hasattr(self.deezer_client, 'search_tracks'):
+                results = self.deezer_client.search_tracks(query)
+            else:
+                results = self.deezer_client.search(query)
+
             if results:
                 return results[0]
         except Exception as e:
