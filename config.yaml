@@ -7,6 +7,10 @@ tidal:
   token: '3918805793~L21lZGlhdHJhY2tzL0dpc0lBeEluT1RBNE9HRmxPRGczWkdZMVlUVTFOamMzTlRKbFlXTTVOalptTjJOaFpEZGZOakV1YlhBMEloc2RBQUNBUUNBQktoRGJhaWhkR3VReFhHWEZ4RW51d0h4YU1nQS8qfmQwMDA0MWU2YzM3NDZiOWM2MDQ0OWE4ZWEyNmU1NTBlMGIwMjQzNzg='
   client_id: 'x2a4kYWQrqVTUO39'
   client_secret: 'cgYDicHJTxchJkGFrS5dJ0nXWOKPeznjARc7xJ8a4K8='
+  access_token: ''
+  refresh_token: ''
+  token_type: ''
+  expiry_time: 0
 deezer:
   arl: ''
   quality: FLAC

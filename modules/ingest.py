@@ -50,30 +50,51 @@ class Ingest:
 
     def _init_tidal(self):
         if not TIDAL_AVAILABLE: return False
-        if self.tidal_session: return True
+
+        # Check if session is already valid
+        if self.tidal_session:
+            if self.tidal_session.check_login():
+                return True
+            else:
+                logger.warning("Tidal session expired or invalid. Attempting reload.")
 
         try:
-            # Initialize Session with config if available
+            # Initialize Session
             config = tidalapi.Config()
-            if self.config['tidal'].get('quality'):
-                # Map config quality to tidalapi Quality enum or string
-                # This is approximate
-                pass
-
             self.tidal_session = tidalapi.Session(config=config)
 
+            # Load tokens from config
+            token_type = self.config['tidal'].get('token_type', 'Bearer')
+            access_token = self.config['tidal'].get('access_token')
+            refresh_token = self.config['tidal'].get('refresh_token')
+            expiry_time = self.config['tidal'].get('expiry_time')
+
+            if access_token and refresh_token:
+                try:
+                    # Convert expiry to datetime if needed or check library expectations
+                    # tidalapi expects expiry_time as datetime object usually? Or timestamp?
+                    # Using load_oauth_session
+                    self.tidal_session.load_oauth_session(
+                        token_type,
+                        access_token,
+                        refresh_token,
+                        expiry_time
+                    )
+                    if self.tidal_session.check_login():
+                        logger.info("Tidal session loaded successfully.")
+                        return True
+                    else:
+                        logger.warning("Tidal login check failed after load.")
+                except Exception as load_err:
+                    logger.error(f"Failed to load saved Tidal session: {load_err}")
+
+            # Fallback to legacy single-token if present (unlikely to work for full access but kept)
             token = self.config['tidal'].get('token')
-            client_id = self.config['tidal'].get('client_id')
-            client_secret = self.config['tidal'].get('client_secret')
+            if token and not access_token:
+                 # Try legacy login? Not supported well in v0.7+
+                 pass
 
-            # If explicit credentials provided, potentially used for login
-            # Real tidalapi usually uses load_oauth_session with token details
-            if token and client_id and client_secret:
-                # Placeholder for loading session
-                # self.tidal_session.load_oauth_session(token_type, access_token, refresh_token, expiry_time)
-                pass
-
-            return True
+            return False
         except Exception as e:
             logger.error(f"Tidal init failed: {e}")
             return False
@@ -83,10 +104,12 @@ class Ingest:
         if self.deezer_client: return True
 
         try:
-            self.deezer_client = deezer.Client()
             arl = self.config['deezer'].get('arl')
-            # deezer-python might not support ARL directly in Client init
-            # We'd likely need a custom session or wrapper
+            headers = {}
+            if arl:
+                headers = {'Cookie': f'arl={arl}'}
+
+            self.deezer_client = deezer.Client(headers=headers)
             return True
         except Exception as e:
             logger.error(f"Deezer init failed: {e}")

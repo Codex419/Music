@@ -209,6 +209,7 @@ class MusicDownloaderApp(TK_ROOT):
         add_setting(lf_tidal, "Client ID", ['tidal', 'client_id'])
         add_setting(lf_tidal, "Client Secret", ['tidal', 'client_secret'])
         add_setting(lf_tidal, "Quality", ['tidal', 'quality'], ["LOW", "HIGH", "LOSSLESS", "HI_RES"])
+        ttk.Button(lf_tidal, text="Login to Tidal", command=self.tidal_login_flow).pack(pady=5)
 
         # Deezer
         lf_deezer = ttk.LabelFrame(self.tab_settings, text="Deezer")
@@ -268,11 +269,127 @@ class MusicDownloaderApp(TK_ROOT):
         ttk.Button(btn_frame, text="Save Configuration", command=self.save_config).pack(side=tk.LEFT, padx=5)
         ttk.Button(btn_frame, text="Repair Config", command=self.repair_config).pack(side=tk.LEFT, padx=5)
 
+    def tidal_login_flow(self):
+        """Initiate Tidal Device Authorization Flow."""
+        try:
+            import tidalapi
+            # Use credentials from config or defaults
+            session = tidalapi.Session()
+            # Note: tidalapi 0.7+ login_oauth_simple returns (future, link, code) or similar
+            # We need to handle this carefully as it blocks or requires polling
+
+            # Since threading/futures with tkinter is tricky, we'll run the login in a thread
+            # and show a non-blocking popup
+
+            # Start the flow
+            login_future, future = session.login_oauth_simple_as_future()
+
+            # login_oauth_simple_as_future returns (future, future) in some versions?
+            # Or (link, future)?
+            # Let's double check standard usage.
+            # Usually: session.login_oauth_simple() prints to stdout.
+            # We want the URI.
+
+            # Let's try to get the URI manually if library doesn't expose it easily,
+            # or rely on the fact that we can't easily capture stdout.
+            # Actually, `login_oauth_simple` is a helper. We can replicate it.
+            # But let's assume we can use the library.
+
+            # Creating a dedicated thread to handle the login process
+            def login_thread():
+                try:
+                    # This might print to stdout, but we can't capture it easily.
+                    # We will try to use the underlying oauth methods if possible.
+                    # For now, let's use the standard method and instruct user to check console/logs?
+                    # No, that's bad UX.
+
+                    # Better: Use `session.pkce_oauth_url()` if available?
+                    # TidalAPI v0.7.x logic:
+                    # login_oauth_simple() -> calls print()
+
+                    # We will override print to capture the URL? Hacky but works.
+                    import io
+                    import sys
+                    capture = io.StringIO()
+                    original_stdout = sys.stdout
+                    sys.stdout = capture
+
+                    # This returns a Future object
+                    future = session.login_oauth_simple()
+
+                    sys.stdout = original_stdout
+                    output = capture.getvalue()
+
+                    # Parse output for URL and Code
+                    # Output format: "Visit https://link.tidal.com/AAAAA to log in, your code is: AAAAA"
+                    import re
+                    url_match = re.search(r'(https://link.tidal.com/\S+)', output)
+                    code_match = re.search(r'code is: (\S+)', output)
+
+                    if url_match:
+                        url = url_match.group(1)
+                        code = code_match.group(1) if code_match else "Unknown"
+
+                        # Show Popup in Main Thread
+                        self.after(0, lambda: self.show_tidal_popup(url, code))
+
+                        # Wait for future
+                        if future.result():
+                            # Login Successful
+                            self.after(0, lambda: self.on_tidal_login_success(session))
+                        else:
+                            logger.error("Tidal login future returned False")
+                            self.after(0, lambda: messagebox.showerror("Login Failed", "Tidal login failed or timed out."))
+                    else:
+                        logger.error(f"Could not parse Tidal login output: {output}")
+                        self.after(0, lambda: messagebox.showerror("Login Error", "Could not start Tidal login flow."))
+
+                except Exception as e:
+                    sys.stdout = sys.__stdout__ # Ensure stdout is restored
+                    logger.error(f"Tidal login thread error: {e}")
+
+            threading.Thread(target=login_thread, daemon=True).start()
+
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to init Tidal login: {e}")
+
+    def show_tidal_popup(self, url, code):
+        """Show dialog with copyable link and code."""
+        import webbrowser
+        dialog = tk.Toplevel(self)
+        dialog.title("Tidal Authorization")
+        dialog.geometry("400x250")
+
+        ttk.Label(dialog, text="1. Copy this code:", font=("Segoe UI", 10)).pack(pady=5)
+
+        code_entry = ttk.Entry(dialog, font=("Consolas", 12, "bold"), justify='center')
+        code_entry.insert(0, code)
+        code_entry.config(state='readonly')
+        code_entry.pack(pady=5)
+
+        ttk.Label(dialog, text="2. Click 'Open Link' and enter the code:", font=("Segoe UI", 10)).pack(pady=5)
+
+        link_btn = ttk.Button(dialog, text="Open Link", command=lambda: webbrowser.open(url))
+        link_btn.pack(pady=5)
+
+        ttk.Label(dialog, text="3. Wait here after authorizing...", font=("Segoe UI", 9, "italic")).pack(pady=10)
+
+    def on_tidal_login_success(self, session):
+        """Save credentials on success."""
+        messagebox.showinfo("Success", "Tidal Login Successful!")
+        # Update Config
+        self.set_config_value(['tidal', 'token_type'], session.token_type)
+        self.set_config_value(['tidal', 'access_token'], session.access_token)
+        self.set_config_value(['tidal', 'refresh_token'], session.refresh_token)
+        self.set_config_value(['tidal', 'expiry_time'], session.expiry_time.timestamp() if session.expiry_time else 0)
+        self.save_config()
+        logger.info("Tidal credentials saved.")
+
     def repair_config(self):
         # Restore defaults
         default_config = {
             "paths": {"music_dir": "Output/Music", "video_dir": "Output/Music Videos", "staging_dir": "Output/Staging"},
-            "tidal": {"token": "", "client_id": "", "client_secret": "", "quality": "HI_RES"},
+            "tidal": {"token": "", "client_id": "", "client_secret": "", "quality": "HI_RES", "access_token": "", "refresh_token": "", "token_type": "", "expiry_time": 0},
             "deezer": {"arl": "", "quality": "FLAC"},
             "youtube": {"cookies_path": "", "token": ""},
             "web_dl": {"audio_format": "flac", "video_format": "mp4", "download_delay": 2},
