@@ -273,82 +273,38 @@ class MusicDownloaderApp(TK_ROOT):
         """Initiate Tidal Device Authorization Flow."""
         try:
             import tidalapi
-            # Use credentials from config or defaults
             session = tidalapi.Session()
-            # Note: tidalapi 0.7+ login_oauth_simple returns (future, link, code) or similar
-            # We need to handle this carefully as it blocks or requires polling
 
-            # Since threading/futures with tkinter is tricky, we'll run the login in a thread
-            # and show a non-blocking popup
+            # Use get_link_login to get the code/url without blocking or printing
+            try:
+                login = session.get_link_login()
+            except Exception as e:
+                logger.error(f"Error getting Tidal login link: {e}")
+                messagebox.showerror("Login Error", f"Failed to start login flow: {e}")
+                return
 
-            # Start the flow
-            login_future, future = session.login_oauth_simple_as_future()
+            url = getattr(login, 'verification_uri_complete', None) or getattr(login, 'verification_uri', 'https://link.tidal.com')
+            code = getattr(login, 'user_code', 'Unknown')
 
-            # login_oauth_simple_as_future returns (future, future) in some versions?
-            # Or (link, future)?
-            # Let's double check standard usage.
-            # Usually: session.login_oauth_simple() prints to stdout.
-            # We want the URI.
+            # Show Popup in Main Thread
+            self.show_tidal_popup(url, code)
 
-            # Let's try to get the URI manually if library doesn't expose it easily,
-            # or rely on the fact that we can't easily capture stdout.
-            # Actually, `login_oauth_simple` is a helper. We can replicate it.
-            # But let's assume we can use the library.
-
-            # Creating a dedicated thread to handle the login process
-            def login_thread():
+            # Create a dedicated thread to wait for login
+            def login_wait_thread():
                 try:
-                    # This might print to stdout, but we can't capture it easily.
-                    # We will try to use the underlying oauth methods if possible.
-                    # For now, let's use the standard method and instruct user to check console/logs?
-                    # No, that's bad UX.
-
-                    # Better: Use `session.pkce_oauth_url()` if available?
-                    # TidalAPI v0.7.x logic:
-                    # login_oauth_simple() -> calls print()
-
-                    # We will override print to capture the URL? Hacky but works.
-                    import io
-                    import sys
-                    capture = io.StringIO()
-                    original_stdout = sys.stdout
-                    sys.stdout = capture
-
-                    # This returns a Future object
-                    future = session.login_oauth_simple()
-
-                    sys.stdout = original_stdout
-                    output = capture.getvalue()
-
-                    # Parse output for URL and Code
-                    # Output format: "Visit https://link.tidal.com/AAAAA to log in, your code is: AAAAA"
-                    import re
-                    url_match = re.search(r'(https://link.tidal.com/\S+)', output)
-                    code_match = re.search(r'code is: (\S+)', output)
-
-                    if url_match:
-                        url = url_match.group(1)
-                        code = code_match.group(1) if code_match else "Unknown"
-
-                        # Show Popup in Main Thread
-                        self.after(0, lambda: self.show_tidal_popup(url, code))
-
-                        # Wait for future
-                        if future.result():
-                            # Login Successful
-                            self.after(0, lambda: self.on_tidal_login_success(session))
-                        else:
-                            logger.error("Tidal login future returned False")
-                            self.after(0, lambda: messagebox.showerror("Login Failed", "Tidal login failed or timed out."))
+                    # process_link_login blocks until user logs in or timeout
+                    session.process_link_login(login)
+                    if session.check_login():
+                        # Login Successful
+                        self.after(0, lambda: self.on_tidal_login_success(session))
                     else:
-                        logger.error(f"Could not parse Tidal login output: {output}")
-                        self.after(0, lambda: messagebox.showerror("Login Error", "Could not start Tidal login flow."))
-
+                        logger.error("Tidal login check failed after process_link_login")
+                        self.after(0, lambda: messagebox.showerror("Login Failed", "Login not verified."))
                 except Exception as e:
-                    sys.stdout = sys.__stdout__ # Ensure stdout is restored
-                    logger.error(f"Tidal login thread error: {e}")
+                    logger.error(f"Tidal login wait error: {e}")
+                    self.after(0, lambda: messagebox.showerror("Login Error", f"Wait process failed: {e}"))
 
-            threading.Thread(target=login_thread, daemon=True).start()
+            threading.Thread(target=login_wait_thread, daemon=True).start()
 
         except Exception as e:
             messagebox.showerror("Error", f"Failed to init Tidal login: {e}")
