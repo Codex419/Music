@@ -172,22 +172,71 @@ class MusicDownloaderApp(CTk):
         item_frame = ctk.CTkFrame(self.queue_frame)
         item_frame.pack(fill="x", pady=2)
 
-        lbl_info = ctk.CTkLabel(item_frame, text=f"{artist} - {title}", anchor="w")
-        lbl_info.pack(side="left", padx=10, fill="x", expand=True)
+        # Drag/Order Controls
+        btn_up = ctk.CTkButton(item_frame, text="▲", width=20, command=lambda: self.move_item_up(item_frame))
+        btn_up.pack(side="left", padx=2)
+        btn_down = ctk.CTkButton(item_frame, text="▼", width=20, command=lambda: self.move_item_down(item_frame))
+        btn_down.pack(side="left", padx=2)
+
+        lbl_info = ctk.CTkLabel(item_frame, text=f"{artist} - {title}", anchor="w", width=300)
+        lbl_info.pack(side="left", padx=10)
+
+        progress = ctk.CTkProgressBar(item_frame, width=200)
+        progress.set(0)
+        progress.pack(side="left", padx=10, fill="x", expand=True)
 
         lbl_status = ctk.CTkLabel(item_frame, text=status, width=150, anchor="e")
-        lbl_status.pack(side="right", padx=10)
+        lbl_status.pack(side="right", padx=5)
+
+        btn_del = ctk.CTkButton(item_frame, text="X", width=20, fg_color="red", command=lambda: self.remove_item(item_frame))
+        btn_del.pack(side="right", padx=5)
 
         # Store ref to update status later
-        item_data = {'frame': item_frame, 'lbl_status': lbl_status, 'info': (title, artist)}
+        item_data = {
+            'frame': item_frame,
+            'lbl_status': lbl_status,
+            'progress': progress,
+            'info': (title, artist),
+            'id': id(item_frame) # Unique ID for mapping
+        }
         self.queue_items.append(item_data)
 
         # Add to processing queue
         self.job_queue.put(len(self.queue_items) - 1) # Put index
 
-    def update_status(self, index, status):
+    def update_status(self, index, status, progress_val=None):
         if 0 <= index < len(self.queue_items):
-            self.after(0, lambda: self.queue_items[index]['lbl_status'].configure(text=status))
+            def _update():
+                self.queue_items[index]['lbl_status'].configure(text=status)
+                if progress_val is not None:
+                    self.queue_items[index]['progress'].set(progress_val)
+            self.after(0, _update)
+
+    def move_item_up(self, frame):
+        # Find index
+        idx = next((i for i, x in enumerate(self.queue_items) if x['frame'] == frame), -1)
+        if idx > 0:
+            # Swap in list
+            self.queue_items[idx], self.queue_items[idx-1] = self.queue_items[idx-1], self.queue_items[idx]
+            # Swap in UI packing
+            frame.pack(before=self.queue_items[idx]['frame'])
+            # Rebuild queue? Complex with active processing.
+            # For now, just visual reorder, processing order fixed in Queue object.
+            # To fix processing order, we'd need a priority queue or list we manage manually.
+
+    def move_item_down(self, frame):
+        idx = next((i for i, x in enumerate(self.queue_items) if x['frame'] == frame), -1)
+        if idx < len(self.queue_items) - 1:
+            self.queue_items[idx], self.queue_items[idx+1] = self.queue_items[idx+1], self.queue_items[idx]
+            frame.pack(after=self.queue_items[idx]['frame'])
+
+    def remove_item(self, frame):
+        idx = next((i for i, x in enumerate(self.queue_items) if x['frame'] == frame), -1)
+        if idx != -1:
+            frame.destroy()
+            self.queue_items.pop(idx)
+            # Remove from job_queue is hard. We mark it as skipped/deleted?
+            # Ideally we check validity before processing.
 
     def setup_settings_tab(self):
         # Scrollable Settings
@@ -241,6 +290,24 @@ class MusicDownloaderApp(CTk):
         add_combo("Model Size", ['ai', 'model_size'], ["tiny", "base", "small", "medium", "large-v2", "turbo"])
         add_combo("Device", ['ai', 'device'], ["cpu", "cuda", "auto"])
         add_entry("Concurrency", ['web_dl', 'concurrent_limit'])
+
+        # Helper for checkbox
+        def add_check(label, key_path):
+            frame = ctk.CTkFrame(scroll)
+            frame.pack(fill="x", pady=2)
+            ctk.CTkLabel(frame, text=label, width=120, anchor="w").pack(side="left", padx=10)
+            val = bool(self.get_config_value(key_path))
+            var = ctk.BooleanVar(value=val)
+            chk = ctk.CTkCheckBox(frame, text="", variable=var, command=lambda: self.set_config_value(key_path, var.get()))
+            chk.pack(side="right", padx=10)
+
+        add_check("VAD Filter", ['ai', 'vad_filter'])
+
+        # Soulseek
+        add_section("Soulseek")
+        add_check("Enabled", ['soulseek', 'enabled'])
+        add_entry("URL", ['soulseek', 'url'])
+        add_entry("API Key", ['soulseek', 'api_key'])
 
         # Save
         ctk.CTkButton(scroll, text="Save Config", command=self.save_config, fg_color="green").pack(pady=20)
@@ -431,6 +498,18 @@ class MusicDownloaderApp(CTk):
                 ctk.CTkButton(f, text="Select", width=60,
                               command=lambda c=cand: [setattr(self, 'user_decision', c), self.user_input_event.set(), top.destroy()]).pack(side="right")
 
+            def modify():
+                top.destroy()
+                new_q = ctk.CTkInputDialog(text="Enter new query:", title="Modify Search").get_input()
+                if new_q:
+                    self.user_decision = f"modify:{new_q}"
+                    self.user_input_event.set()
+                else:
+                    # If cancelled, treated as skip or re-open?
+                    # For simplicity, skip logic via close
+                    self.user_input_event.set()
+
+            ctk.CTkButton(top, text="Modify Search", command=modify).pack(pady=5)
             ctk.CTkButton(top, text="Skip", fg_color="red",
                           command=lambda: [self.user_input_event.set(), top.destroy()]).pack(pady=10)
 
@@ -465,18 +544,27 @@ class MusicDownloaderApp(CTk):
                 if video_cand:
                     self.update_status(idx, "DL Video")
                     vid_path = f"temp_vid_{int(time.time())}.mp4"
-                    files_created.append(vid_path)
-                    self.ingest.download_youtube_video(video_cand['obj'], vid_path)
 
-                    if self.stop_event.is_set(): raise InterruptedError()
+                    # Pass the correct object structure expected by download_youtube_video
+                    # video_cand is the dict from search result, 'obj' is the inner info dict
+                    dl_result = self.ingest.download_youtube_video(video_cand['obj'], vid_path)
 
-                    self.update_status(idx, "Transcribing Video")
-                    self.enrichment.transcribe_file(vid_path, 'srt')
-                    self.enrichment.sync_metadata(audio_path, vid_path)
+                    if dl_result and os.path.exists(dl_result):
+                        files_created.append(dl_result)
 
-                    # Archive
-                    meta = {'artist': audio_cand['artist'], 'title': audio_cand['title'], 'album': audio_cand['album'], 'date': '2023'}
-                    self.governance.archive_video(vid_path, meta)
+                        if self.stop_event.is_set(): raise InterruptedError()
+
+                        self.update_status(idx, "Transcribing Video")
+                        self.enrichment.transcribe_file(dl_result, 'srt')
+
+                        if audio_path and os.path.exists(audio_path):
+                            self.enrichment.sync_metadata(audio_path, dl_result)
+
+                        # Archive
+                        meta = {'artist': audio_cand['artist'], 'title': audio_cand['title'], 'album': audio_cand['album'], 'date': '2023'}
+                        self.governance.archive_video(dl_result, meta)
+                    else:
+                        logger.error("Video download returned None or file missing.")
 
                 # Archive Audio
                 meta = {'artist': audio_cand['artist'], 'title': audio_cand['title'], 'album': audio_cand['album'], 'date': '2023'}

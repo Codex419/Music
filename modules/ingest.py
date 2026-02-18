@@ -347,19 +347,40 @@ class Ingest:
 
     def download_youtube_video(self, video_info, output_path):
         """Download YouTube video."""
-        if not video_info: return None
+        if not video_info:
+            logger.error("Download failed: No video info provided")
+            return None
+
+        url = video_info.get('webpage_url')
+        if not url and 'obj' in video_info: # Check if wrapped in candidate dict
+             url = video_info['obj'].get('webpage_url')
+
+        if not url:
+             # Fallback if just an ID or URL string
+             url = video_info if isinstance(video_info, str) else video_info.get('url')
+
+        if not url:
+            logger.error("Download failed: No URL found in video info")
+            return None
 
         ydl_opts = {
-            'quiet': True,
-            'outtmpl': output_path, # Ensure this matches desired format
+            'quiet': False, # Enable output for debugging
+            'outtmpl': output_path,
             'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
-            'noplaylist': True
+            'noplaylist': True,
+            'overwrites': True,
         }
 
         try:
+            logger.info(f"Downloading YouTube URL: {url} to {output_path}")
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                ydl.download([video_info['webpage_url']])
-            return output_path
+                ydl.download([url])
+
+            if os.path.exists(output_path):
+                return output_path
+            else:
+                logger.error(f"YouTube download finished but file not found at {output_path}")
+                return None
         except Exception as e:
             logger.error(f"YouTube download failed: {e}")
             return None
