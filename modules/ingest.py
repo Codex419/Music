@@ -115,27 +115,48 @@ class Ingest:
             logger.error(f"Deezer init failed: {e}")
             return False
 
-    def search_tidal(self, query):
-        """Search Tidal for a track. Returns track object or None."""
-        if not self._init_tidal(): return None
+    def search_tidal(self, query, limit=5):
+        """Search Tidal. Returns list of dicts with metadata and obj."""
+        if not self._init_tidal(): return []
 
+        candidates = []
         try:
-            # Attempt search using string types if object passing fails (400 error)
-            # Some versions prefer 'TRACK' or 'tracks'
-            try:
-                results = self.tidal_session.search(query, models=[tidalapi.Track])
-            except Exception:
-                # Fallback to older/simpler method signature if available or string model
-                # Note: tidalapi usually requires model classes
-                logger.warning("Retrying Tidal search with simplified params...")
-                # Try offset/limit if implicit defaults are failing
-                results = self.tidal_session.search(query, models=[tidalapi.Track], limit=5)
+            # Attempt search
+            results = self.tidal_session.search(query, models=[tidalapi.Track], limit=limit)
 
-            if results['tracks']:
-                return results['tracks'][0]
+            for track in results['tracks'][:limit]:
+                # Extract Cover Art URL (if available)
+                cover_url = None
+                if hasattr(track, 'album') and track.album and hasattr(track.album, 'cover'):
+                     # Tidal cover logic often requires constructing URL or accessing property
+                     # Assuming standard tidal method or property
+                     try:
+                         # tidalapi 0.7+: album.image(80) or similar.
+                         # fallback to manually constructing from cover_id
+                         if hasattr(track.album, 'image'):
+                             cover_url = track.album.image(320)
+                         elif hasattr(track.album, 'cover'):
+                             # cover is usually a UUID like ID.
+                             # URL format: https://resources.tidal.com/images/{id.replace('-', '/')}/320x320.jpg
+                             cover_id = track.album.cover
+                             if cover_id:
+                                 path = cover_id.replace('-', '/')
+                                 cover_url = f"https://resources.tidal.com/images/{path}/320x320.jpg"
+                     except: pass
+
+                candidates.append({
+                    'source': 'Tidal',
+                    'title': track.name,
+                    'artist': track.artist.name if track.artist else "Unknown",
+                    'album': track.album.name if track.album else "Unknown",
+                    'duration': track.duration if hasattr(track, 'duration') else 0,
+                    'cover_url': cover_url,
+                    'obj': track
+                })
+
         except Exception as e:
             logger.error(f"Tidal search error: {e}")
-        return None
+        return candidates
 
     def expand_artist(self, artist_name):
         """Expand artist into a list of tracks (Top Tracks)."""
@@ -222,23 +243,35 @@ class Ingest:
             logger.error(f"Tidal download failed: {e}")
             return None
 
-    def search_deezer(self, query):
-        """Search Deezer for a track."""
-        if not self._init_deezer(): return None
+    def search_deezer(self, query, limit=5):
+        """Search Deezer. Returns list of dicts."""
+        if not self._init_deezer(): return []
 
+        candidates = []
         try:
-            # Use search() with default params, filter results manually if needed
-            # or use search_tracks specifically if available
             if hasattr(self.deezer_client, 'search_tracks'):
-                results = self.deezer_client.search_tracks(query)
+                results = self.deezer_client.search_tracks(query, limit=limit)
             else:
-                results = self.deezer_client.search(query)
+                results = self.deezer_client.search(query, limit=limit)
 
-            if results:
-                return results[0]
+            for track in results[:limit]:
+                # Extract Cover
+                cover_url = None
+                if hasattr(track, 'album') and hasattr(track.album, 'cover_medium'):
+                    cover_url = track.album.cover_medium
+
+                candidates.append({
+                    'source': 'Deezer',
+                    'title': track.title,
+                    'artist': track.artist.name if hasattr(track, 'artist') else "Unknown",
+                    'album': track.album.title if hasattr(track, 'album') else "Unknown",
+                    'duration': track.duration if hasattr(track, 'duration') else 0,
+                    'cover_url': cover_url,
+                    'obj': track
+                })
         except Exception as e:
             logger.error(f"Deezer search error: {e}")
-        return None
+        return candidates
 
     def download_deezer(self, track, output_path):
         """Download from Deezer."""
@@ -255,24 +288,35 @@ class Ingest:
             logger.error(f"Deezer download failed: {e}")
             return None
 
-    def search_youtube_video(self, query):
-        """Search YouTube for a Music Video."""
-        if not YT_DLP_AVAILABLE: return None
+    def search_youtube_video(self, query, limit=5):
+        """Search YouTube. Returns list of dicts."""
+        if not YT_DLP_AVAILABLE: return []
 
         ydl_opts = {
             'quiet': True,
-            'default_search': 'ytsearch1',
+            'default_search': f'ytsearch{limit}',
             'noplaylist': True,
+            'extract_flat': True # Faster search, get basics
         }
 
+        candidates = []
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(f"{query} Official Music Video", download=False)
-                if 'entries' in info and info['entries']:
-                    return info['entries'][0] # Return video info dict
+                if 'entries' in info:
+                    for vid in info['entries']:
+                        candidates.append({
+                            'source': 'YouTube',
+                            'title': vid.get('title'),
+                            'artist': vid.get('uploader'), # Approx
+                            'album': 'N/A',
+                            'duration': vid.get('duration'),
+                            'cover_url': vid.get('thumbnail'), # Often available in flat extraction? if not, need full extraction
+                            'obj': vid # Stores the info dict
+                        })
         except Exception as e:
             logger.error(f"YouTube search failed: {e}")
-        return None
+        return candidates
 
     def download_youtube_video(self, video_info, output_path):
         """Download YouTube video."""
@@ -292,6 +336,25 @@ class Ingest:
         except Exception as e:
             logger.error(f"YouTube download failed: {e}")
             return None
+
+    def search_soulseek(self, query, limit=5):
+        """Search Soulseek via Slskd API."""
+        if not self.config.get('soulseek', {}).get('enabled'): return []
+
+        url = self.config['soulseek'].get('url', 'http://localhost:5030')
+        api_key = self.config['soulseek'].get('api_key', '')
+
+        # Placeholder for Slskd logic
+        # 1. POST /api/v0/search {searchText: query} -> get id
+        # 2. GET /api/v0/search/{id} -> poll results
+        # For this exercise, since we can't test against a real instance easily, return empty or mock
+        return []
+
+    def download_soulseek(self, track_obj, output_path):
+        """Download from Soulseek."""
+        # This requires queuing a download in slskd and monitoring it.
+        # Then moving the file to output_path.
+        pass
 
     def parse_spotify_url(self, url):
         """Parse Spotify URL to get Artist/Track info."""

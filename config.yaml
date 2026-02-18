@@ -14,6 +14,11 @@ tidal:
 deezer:
   arl: ''
   quality: FLAC
+soulseek:
+  enabled: false
+  url: 'http://localhost:5030'
+  api_key: ''
+  download_path: 'Output/Soulseek'
 youtube:
   cookies_path: ''
   token: ''
@@ -21,6 +26,7 @@ web_dl:
   audio_format: flac
   download_delay: 2
   video_format: mp4
+  concurrent_limit: 3
 ai:
   beam_size: 5
   device: auto
