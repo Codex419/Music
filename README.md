@@ -17,7 +17,7 @@ A cohesive, modular Python application designed to unify media acquisition, AI e
     *   **faster-whisper**: Auto-generates synced lyrics (`.lrc`) from audio and subtitles (`.srt`) from video.
     *   **Metadata Sync**: Transfers tags and cover art from high-quality audio to music videos.
 *   **Governance**:
-    *   Standardized directory structure: `Music/Artist/Album [Year]/Artist - Song.ext`.
+    *   Standardized directory structure: `Music/Artist/Album [Year]/Artist - Song.ext`, `Music Videos/Artist - Song.ext`.
     *   Auto-sanitization of filenames.
 *   **Modern GUI**:
     *   Dark Mode native interface (CustomTkinter).
