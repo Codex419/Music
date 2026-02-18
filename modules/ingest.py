@@ -3,8 +3,9 @@ import logging
 import re
 import json
 import time
-from pathlib import Path
 import requests
+import subprocess
+from pathlib import Path
 
 # Try importing dependencies
 try:
@@ -31,12 +32,6 @@ try:
 except ImportError:
     MUSICBRAINZ_AVAILABLE = False
 
-try:
-    from bs4 import BeautifulSoup
-    BS4_AVAILABLE = True
-except ImportError:
-    BS4_AVAILABLE = False
-
 logger = logging.getLogger(__name__)
 
 class Ingest:
@@ -48,52 +43,26 @@ class Ingest:
         if MUSICBRAINZ_AVAILABLE:
             musicbrainzngs.set_useragent("MusicDownloader", "1.0", "contact@example.com")
 
+    # --- Authentication & Init ---
     def _init_tidal(self):
         if not TIDAL_AVAILABLE: return False
-
-        # Check if session is already valid
-        if self.tidal_session:
-            if self.tidal_session.check_login():
-                return True
-            else:
-                logger.warning("Tidal session expired or invalid. Attempting reload.")
+        if self.tidal_session and self.tidal_session.check_login(): return True
 
         try:
-            # Initialize Session
             config = tidalapi.Config()
             self.tidal_session = tidalapi.Session(config=config)
 
-            # Load tokens from config
+            # OAuth 2.0
             token_type = self.config['tidal'].get('token_type', 'Bearer')
             access_token = self.config['tidal'].get('access_token')
             refresh_token = self.config['tidal'].get('refresh_token')
             expiry_time = self.config['tidal'].get('expiry_time')
 
             if access_token and refresh_token:
-                try:
-                    # Convert expiry to datetime if needed or check library expectations
-                    # tidalapi expects expiry_time as datetime object usually? Or timestamp?
-                    # Using load_oauth_session
-                    self.tidal_session.load_oauth_session(
-                        token_type,
-                        access_token,
-                        refresh_token,
-                        expiry_time
-                    )
-                    if self.tidal_session.check_login():
-                        logger.info("Tidal session loaded successfully.")
-                        return True
-                    else:
-                        logger.warning("Tidal login check failed after load.")
-                except Exception as load_err:
-                    logger.error(f"Failed to load saved Tidal session: {load_err}")
-
-            # Fallback to legacy single-token if present (unlikely to work for full access but kept)
-            token = self.config['tidal'].get('token')
-            if token and not access_token:
-                 # Try legacy login? Not supported well in v0.7+
-                 pass
-
+                self.tidal_session.load_oauth_session(token_type, access_token, refresh_token, expiry_time)
+                if self.tidal_session.check_login():
+                    logger.info("Tidal session loaded.")
+                    return True
             return False
         except Exception as e:
             logger.error(f"Tidal init failed: {e}")
@@ -102,365 +71,288 @@ class Ingest:
     def _init_deezer(self):
         if not DEEZER_AVAILABLE: return False
         if self.deezer_client: return True
-
         try:
             arl = self.config['deezer'].get('arl')
-            headers = {}
-            if arl:
-                headers = {'Cookie': f'arl={arl}'}
-
+            headers = {'Cookie': f'arl={arl}'} if arl else {}
             self.deezer_client = deezer.Client(headers=headers)
             return True
         except Exception as e:
             logger.error(f"Deezer init failed: {e}")
             return False
 
+    # --- Search Logic ---
     def search_tidal(self, query, limit=5):
-        """Search Tidal. Returns list of dicts with metadata and obj."""
         if not self._init_tidal(): return []
-
         candidates = []
         try:
-            # Attempt search
             results = self.tidal_session.search(query, models=[tidalapi.Track], limit=limit)
-
             for track in results['tracks'][:limit]:
-                # Extract Cover Art URL (if available)
                 cover_url = None
-                if hasattr(track, 'album') and track.album and hasattr(track.album, 'cover'):
-                     # Tidal cover logic often requires constructing URL or accessing property
-                     # Assuming standard tidal method or property
-                     try:
-                         # tidalapi 0.7+: album.image(80) or similar.
-                         # fallback to manually constructing from cover_id
-                         if hasattr(track.album, 'image'):
-                             cover_url = track.album.image(320)
-                         elif hasattr(track.album, 'cover'):
-                             # cover is usually a UUID like ID.
-                             # URL format: https://resources.tidal.com/images/{id.replace('-', '/')}/320x320.jpg
-                             cover_id = track.album.cover
-                             if cover_id:
-                                 path = cover_id.replace('-', '/')
-                                 cover_url = f"https://resources.tidal.com/images/{path}/320x320.jpg"
-                     except: pass
+                try:
+                    if hasattr(track.album, 'image'): cover_url = track.album.image(320)
+                except: pass
 
                 candidates.append({
                     'source': 'Tidal',
                     'title': track.name,
                     'artist': track.artist.name if track.artist else "Unknown",
                     'album': track.album.name if track.album else "Unknown",
-                    'duration': track.duration if hasattr(track, 'duration') else 0,
+                    'duration': track.duration,
                     'cover_url': cover_url,
                     'obj': track
                 })
-
         except Exception as e:
             logger.error(f"Tidal search error: {e}")
         return candidates
 
-    def expand_artist(self, artist_name):
-        """Expand artist into a list of tracks (Top Tracks)."""
-        tracks = []
-        if self._init_tidal():
-            try:
-                search = self.tidal_session.search(artist_name, models=[tidalapi.Artist])
-                if search['artists']:
-                    artist = search['artists'][0]
-                    top_tracks = artist.get_top_tracks() # Helper method on Artist object
-                    tracks = [f"{t.artist.name} - {t.name}" for t in top_tracks]
-                    logger.info(f"Expanded Artist '{artist_name}' via Tidal: {len(tracks)} tracks")
-            except Exception as e:
-                logger.error(f"Tidal artist expansion failed: {e}")
-
-        if not tracks and self._init_deezer():
-            try:
-                # Deezer: Use specialized search methods
-                # First find artist
-                artists = self.deezer_client.search_artists(artist_name)
-                if artists:
-                    artist = artists[0]
-                    top_tracks = artist.get_top()
-                    tracks = [f"{t.artist.name} - {t.title}" for t in top_tracks]
-                    logger.info(f"Expanded Artist '{artist_name}' via Deezer: {len(tracks)} tracks")
-            except Exception as e:
-                logger.error(f"Deezer artist expansion failed: {e}")
-        return tracks
-
-    def expand_album(self, album_name):
-        """Expand album into a list of tracks."""
-        tracks = []
-        if self._init_tidal():
-            try:
-                search = self.tidal_session.search(album_name, models=[tidalapi.Album])
-                if search['albums']:
-                    album = search['albums'][0]
-                    # Fetch tracks for album
-                    album_tracks = album.tracks()
-                    tracks = [f"{t.artist.name} - {t.name}" for t in album_tracks]
-                    logger.info(f"Expanded Album '{album_name}' via Tidal: {len(tracks)} tracks")
-            except Exception as e:
-                logger.error(f"Tidal album expansion failed: {e}")
-
-        if not tracks and self._init_deezer():
-            try:
-                # Deezer search albums
-                albums = self.deezer_client.search_albums(album_name)
-                if albums:
-                    album = albums[0]
-                    album_tracks = album.get_tracks()
-                    tracks = [f"{t.artist.name} - {t.title}" for t in album_tracks]
-                    logger.info(f"Expanded Album '{album_name}' via Deezer: {len(tracks)} tracks")
-            except Exception as e:
-                logger.error(f"Deezer album expansion failed: {e}")
-        return tracks
-
-    def download_tidal(self, track, output_path):
-        """Download track from Tidal."""
-        if not track: return None
-
-        try:
-            logger.info(f"Attempting to download Tidal track {track.name}")
-            if self.tidal_session:
-                try:
-                    # Check method existence
-                    if hasattr(self.tidal_session.track, 'get_url'):
-                        stream_url = self.tidal_session.track.get_url(track.id)
-                    elif hasattr(self.tidal_session.track, 'get_stream_url'):
-                        stream_url = self.tidal_session.track.get_stream_url(track.id)
-                    elif hasattr(track, 'get_url'):
-                        stream_url = track.get_url()
-                    else:
-                        # Some versions use direct track object
-                        stream_url = self.tidal_session.track(track.id).get_url()
-
-                    if stream_url:
-                        response = requests.get(stream_url, stream=True)
-                        if response.status_code == 200:
-                            with open(output_path, 'wb') as f:
-                                for chunk in response.iter_content(chunk_size=1024):
-                                    f.write(chunk)
-                            logger.info(f"Downloaded Tidal track to {output_path}")
-                            return output_path
-                        with open(output_path, 'wb') as f:
-                            for chunk in response.iter_content(chunk_size=1024):
-                                f.write(chunk)
-                        logger.info(f"Downloaded Tidal track to {output_path}")
-                        return output_path
-                    else:
-                        logger.error(f"Tidal stream request failed: {response.status_code}")
-                except Exception as stream_e:
-                    logger.error(f"Tidal get_url failed: {stream_e}")
-
-            logger.error("Tidal download failed: No valid stream URL.")
-            return None
-        except Exception as e:
-            logger.error(f"Tidal download failed: {e}")
-            return None
-
     def search_deezer(self, query, limit=5):
-        """Search Deezer. Returns list of dicts."""
         if not self._init_deezer(): return []
-
         candidates = []
         try:
-            if hasattr(self.deezer_client, 'search_tracks'):
-                results = self.deezer_client.search_tracks(query, limit=limit)
-            else:
-                results = self.deezer_client.search(query, limit=limit)
-
+            results = self.deezer_client.search(query, limit=limit)
             for track in results[:limit]:
-                # Extract Cover
-                cover_url = None
-                if hasattr(track, 'album') and hasattr(track.album, 'cover_medium'):
-                    cover_url = track.album.cover_medium
-
                 candidates.append({
                     'source': 'Deezer',
                     'title': track.title,
-                    'artist': track.artist.name if hasattr(track, 'artist') else "Unknown",
-                    'album': track.album.title if hasattr(track, 'album') else "Unknown",
-                    'duration': track.duration if hasattr(track, 'duration') else 0,
-                    'cover_url': cover_url,
+                    'artist': track.artist.name,
+                    'album': track.album.title,
+                    'duration': track.duration,
+                    'cover_url': track.album.cover_medium,
                     'obj': track
                 })
         except Exception as e:
             logger.error(f"Deezer search error: {e}")
         return candidates
 
-    def download_deezer(self, track, output_path):
-        """Download from Deezer."""
-        if not track: return None
-        try:
-            logger.info(f"Attempting to download Deezer track {track.title}")
-            # Real implementation requires authenticated client with ARL
-            # Placeholder for potential library method:
-            # stream_url = self.deezer_client.get_track_download_url(track.id)
+    # --- Robust YouTube Video Selection (Legacy Port) ---
+    def search_and_select_best_video(self, artist, title, limit=10):
+        """
+        Robust search for the best official music video using legacy scoring logic.
+        Returns the best candidate dict or None.
+        """
+        if not YT_DLP_AVAILABLE: return None
 
-            logger.error("Deezer download failed: Client not authenticated or method unavailable.")
-            return None
-        except Exception as e:
-            logger.error(f"Deezer download failed: {e}")
-            return None
+        # 1. Official Search
+        query = f"{artist} - {title} official music video"
+        logger.info(f"Searching YouTube for: {query}")
+        raw_results = self._yt_search_raw(query, limit)
 
-    def search_youtube_video(self, query, limit=5):
-        """Search YouTube. Returns list of dicts."""
-        if not YT_DLP_AVAILABLE: return []
+        # 2. Filter & Score
+        selected = self._filter_and_select(raw_results, artist, title)
 
-        # 'extract_flat': 'in_playlist' allows getting metadata for search results without deep extraction
-        # but 'extract_flat': True might be too shallow for some thumbnails.
-        # We'll use 'extract_flat': 'in_playlist' which is safer for search queries.
-        ydl_opts = {
+        # 3. Fallback Search if needed
+        if not selected:
+            query_simple = f"{artist} - {title}"
+            logger.info(f"Fallback search: {query_simple}")
+            raw_results_simple = self._yt_search_raw(query_simple, limit)
+            selected = self._filter_and_select(raw_results_simple, artist, title)
+
+        return selected
+
+    def _yt_search_raw(self, query, limit):
+        """Perform raw search using yt-dlp library."""
+        opts = {
             'quiet': True,
             'default_search': f'ytsearch{limit}',
             'noplaylist': True,
-            'extract_flat': 'in_playlist',
+            'extract_flat': 'in_playlist', # Get metadata without downloading
             'skip_download': True,
             'ignoreerrors': True,
         }
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            try:
+                info = ydl.extract_info(query, download=False)
+                return info.get('entries', [])
+            except Exception as e:
+                logger.error(f"yt-dlp search error: {e}")
+                return []
+
+    def _filter_and_select(self, videos, artist, title):
+        """
+        Applies robust scoring logic to select the best video.
+        Ported from legacy/main_processor.py.
+        """
+        if not videos: return None
 
         candidates = []
+        artist_lower = artist.lower()
+        title_lower = title.lower()
+
+        negative_keywords = ['lyric', 'cover', 'remix', 'live', 'reaction', 'instrumental',
+                             'karaoke', 'parody', 'chipmunk', 'slowed', 'reverb', 'bass boosted',
+                             'tutorial', 'lesson', 'interview', 'teaser', 'trailer', 'fan cam',
+                             'album version', 'full album', 'topic', 'provided to youtube by']
+        positive_keywords = ['official music video', 'official video', 'official audio']
+
+        for vid in videos:
+            vid_title = vid.get('title', '')
+            vid_title_lower = vid_title.lower()
+            channel = vid.get('uploader', '') or vid.get('channel', '')
+            channel_lower = channel.lower()
+
+            score = 0
+            is_negative = any(nk in vid_title_lower for nk in negative_keywords if nk not in ['official audio', 'topic'])
+
+            # Scoring
+            if is_negative:
+                score -= 20
+
+            if any(pk in vid_title_lower for pk in positive_keywords):
+                score += 10
+
+            # Channel Match
+            if artist_lower == channel_lower or f"{artist_lower} official" in channel_lower or "vevo" in channel_lower:
+                score += 8
+            elif artist_lower in channel_lower:
+                score += 5
+
+            # Title Match
+            if title_lower in vid_title_lower:
+                score += 5
+
+            # Strict Official Check (Priority Return)
+            is_official_title = any(pk in vid_title_lower for pk in positive_keywords)
+            is_official_channel = (artist_lower in channel_lower or "vevo" in channel_lower)
+            if is_official_title and is_official_channel and not is_negative:
+                logger.info(f"Prioritized official video: {vid_title}")
+                return {
+                    'source': 'YouTube',
+                    'title': vid_title,
+                    'artist': channel,
+                    'url': vid.get('url') or vid.get('webpage_url'),
+                    'duration': vid.get('duration'),
+                    'obj': vid
+                }
+
+            if not is_negative and (title_lower in vid_title_lower or score > 0):
+                candidates.append({'video': vid, 'score': score})
+
+        # Sort by score
+        candidates.sort(key=lambda x: x['score'], reverse=True)
+
+        if candidates:
+            best = candidates[0]
+            # Threshold check
+            if best['score'] >= 5:
+                vid = best['video']
+                logger.info(f"Selected video by score ({best['score']}): {vid.get('title')}")
+                return {
+                    'source': 'YouTube',
+                    'title': vid.get('title'),
+                    'artist': vid.get('uploader'),
+                    'url': vid.get('url') or vid.get('webpage_url'),
+                    'duration': vid.get('duration'),
+                    'obj': vid
+                }
+
+        return None
+
+    # --- Download Logic ---
+    def download_tidal(self, track_obj, output_path):
+        # ... (Existing Tidal Download logic) ...
         try:
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(f"{query} Official Music Video", download=False)
+            if hasattr(self.tidal_session.track, 'get_url'):
+                url = self.tidal_session.track.get_url(track_obj.id)
+            else:
+                url = track_obj.get_url()
 
-                entries = info.get('entries', [])
-                if not entries and 'entries' not in info:
-                     # Sometimes info IS the result if single match? Unlikely for ytsearch
-                     entries = [info]
-
-                for vid in entries:
-                    if not vid: continue
-                    # For flat extraction, thumbnails might be missing or limited
-                    # We accept what we get.
-                    candidates.append({
-                        'source': 'YouTube',
-                        'title': vid.get('title', 'Unknown'),
-                        'artist': vid.get('uploader', 'Unknown'),
-                        'album': 'N/A',
-                        'duration': vid.get('duration', 0),
-                        'cover_url': vid.get('thumbnail') or vid.get('thumbnails', [{}])[-1].get('url'),
-                        'obj': vid
-                    })
+            if url:
+                r = requests.get(url, stream=True)
+                with open(output_path, 'wb') as f:
+                    for chunk in r.iter_content(1024): f.write(chunk)
+                return output_path
         except Exception as e:
-            logger.error(f"YouTube search failed: {e}")
-        return candidates
+            logger.error(f"Tidal DL error: {e}")
+        return None
 
-    def download_youtube_video(self, video_info, output_path):
-        """Download YouTube video."""
-        if not video_info:
-            logger.error("Download failed: No video info provided")
-            return None
+    def download_deezer(self, track_obj, output_path):
+        # Placeholder - Real implementation requires encryption handling
+        return None
 
-        url = video_info.get('webpage_url')
-        if not url and 'obj' in video_info: # Check if wrapped in candidate dict
-             url = video_info['obj'].get('webpage_url')
+    def download_youtube_video(self, video_obj, output_path):
+        """Download video using yt-dlp."""
+        url = video_obj.get('webpage_url') or video_obj.get('url')
+        if not url: return None
 
-        if not url:
-             # Fallback if just an ID or URL string
-             url = video_info if isinstance(video_info, str) else video_info.get('url')
-
-        if not url:
-            logger.error("Download failed: No URL found in video info")
-            return None
-
-        ydl_opts = {
-            'quiet': False, # Enable output for debugging
+        opts = {
+            'quiet': True,
             'outtmpl': output_path,
             'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
             'noplaylist': True,
-            'overwrites': True,
+            'overwrites': True
         }
-
         try:
-            logger.info(f"Downloading YouTube URL: {url} to {output_path}")
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            with yt_dlp.YoutubeDL(opts) as ydl:
                 ydl.download([url])
-
-            if os.path.exists(output_path):
-                return output_path
-            else:
-                logger.error(f"YouTube download finished but file not found at {output_path}")
-                return None
+            if os.path.exists(output_path): return output_path
         except Exception as e:
-            logger.error(f"YouTube download failed: {e}")
-            return None
-
-    def search_soulseek(self, query, limit=5):
-        """Search Soulseek via Slskd API."""
-        if not self.config.get('soulseek', {}).get('enabled'): return []
-
-        url = self.config['soulseek'].get('url', 'http://localhost:5030')
-        api_key = self.config['soulseek'].get('api_key', '')
-
-        # Placeholder for Slskd logic
-        # 1. POST /api/v0/search {searchText: query} -> get id
-        # 2. GET /api/v0/search/{id} -> poll results
-        # For this exercise, since we can't test against a real instance easily, return empty or mock
-        return []
-
-    def download_soulseek(self, track_obj, output_path):
-        """Download from Soulseek."""
-        # This requires queuing a download in slskd and monitoring it.
-        # Then moving the file to output_path.
-        pass
-
-    def parse_spotify_url(self, url):
-        """Parse Spotify URL to get Artist/Track info."""
-        try:
-            response = requests.get(url)
-            if response.status_code == 200:
-                html = response.text
-                # Regex for <title>Content</title>
-                match = re.search(r'<title>(.*?)</title>', html)
-                if match:
-                    title_text = match.group(1)
-                    title_text = title_text.replace(" | Spotify", "")
-                    parts = title_text.split(" - ")
-                    if len(parts) >= 2:
-                        return {'title': parts[0], 'artist': parts[1]}
-                    else:
-                        return {'title': title_text, 'artist': 'Unknown'}
-        except Exception as e:
-            logger.error(f"Spotify parse failed: {e}")
+            logger.error(f"YouTube DL error: {e}")
         return None
 
-    def parse_spotify_playlist(self, url):
-        """Parse Spotify Playlist URL to get list of tracks."""
+    # --- Expansion & Helpers ---
+    def expand_artist(self, artist_name):
         tracks = []
-        try:
-            response = requests.get(url)
-            if response.status_code == 200:
-                html = response.text
+        if self._init_tidal():
+            try:
+                res = self.tidal_session.search(artist_name, models=[tidalapi.Artist])
+                if res['artists']:
+                    top = res['artists'][0].get_top_tracks()
+                    tracks = [f"{t.artist.name} - {t.name}" for t in top]
+            except: pass
+        return tracks
 
-                # Regex for "name":"Song Name","artists":[{"name":"Artist"
-                matches = re.findall(r'"name":"(.*?)","artists":\[{"name":"(.*?)"', html)
-                for song, artist in matches:
-                     if song and artist:
-                         tracks.append(f"{artist} - {song}")
+    def expand_album(self, album_name):
+        tracks = []
+        if self._init_tidal():
+            try:
+                res = self.tidal_session.search(album_name, models=[tidalapi.Album])
+                if res['albums']:
+                    t = res['albums'][0].tracks()
+                    tracks = [f"{tr.artist.name} - {tr.name}" for tr in t]
+            except: pass
+        return tracks
 
-                if not tracks:
-                    meta = self.parse_spotify_url(url)
-                    if meta:
-                         # Single track or album fallback
-                         pass
-        except Exception as e:
-            logger.error(f"Spotify playlist parse failed: {e}")
-        return list(set(tracks)) # Unique
+    def parse_playlist(self, url):
+        """
+        Parses various playlist URLs (Spotify, Tidal, YouTube).
+        Returns list of "Artist - Title" strings.
+        """
+        tracks = []
 
-    def get_musicbrainz_metadata(self, query):
-        """Search MusicBrainz for metadata."""
-        if not MUSICBRAINZ_AVAILABLE: return None
+        # Spotify
+        if "spotify.com" in url:
+            # Basic HTML parsing (fallback) or API
+            try:
+                r = requests.get(url)
+                matches = re.findall(r'"name":"(.*?)","artists":\[{"name":"(.*?)"', r.text)
+                tracks = [f"{a} - {s}" for s, a in matches]
+            except: pass
 
-        try:
-            result = musicbrainzngs.search_recordings(query=query, limit=1)
-            if result['recording-list']:
-                rec = result['recording-list'][0]
-                return {
-                    'title': rec['title'],
-                    'artist': rec['artist-credit'][0]['name'],
-                    'album': rec['release-list'][0]['title'] if 'release-list' in rec else 'Unknown',
-                    'date': rec['date'] if 'date' in rec else '0000'
-                }
-        except Exception as e:
-            logger.error(f"MusicBrainz search failed: {e}")
-        return None
+        # Tidal
+        elif "tidal.com" in url:
+            # Need tidal session
+            pass
+
+        # YouTube Playlist (Reverse Logic Preparation)
+        elif "youtube.com" in url and "list=" in url:
+            # Use yt-dlp to get titles
+            opts = {'extract_flat': True, 'quiet': True}
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                info = ydl.extract_info(url, download=False)
+                if 'entries' in info:
+                    for entry in info['entries']:
+                        # We hope the title is "Artist - Title"
+                        tracks.append(entry['title'])
+
+        return list(set(tracks))
+
+    def reverse_search_audio(self, video_title):
+        """
+        Given a video title (e.g. from a YouTube playlist), find the best audio candidate.
+        Reverse Logic: Video Title -> Audio Track
+        """
+        # Heuristic cleaning
+        clean_title = re.sub(r'\(.*?\)|\[.*?\]', '', video_title).strip() # Remove brackets
+        clean_title = clean_title.replace("Official Video", "").replace("Official Audio", "").strip()
+
+        return self.search_tidal(clean_title, limit=1)

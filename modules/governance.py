@@ -1,108 +1,106 @@
 import os
 import shutil
 import re
+import logging
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 class Governance:
     def __init__(self, config):
         self.config = config
-        self.music_base_path = Path(config['paths']['music_dir'])
-        self.video_base_path = Path(config['paths']['video_dir'])
+        self.music_base = Path(config['paths']['music_dir'])
+        self.video_base = Path(config['paths']['video_dir'])
 
-        # Ensure base directories exist
-        self.music_base_path.mkdir(parents=True, exist_ok=True)
-        self.video_base_path.mkdir(parents=True, exist_ok=True)
+        # Create dirs
+        self.music_base.mkdir(parents=True, exist_ok=True)
+        self.video_base.mkdir(parents=True, exist_ok=True)
 
-    def sanitize_filename(self, name: str) -> str:
-        """Sanitize a string to be safe for filenames."""
-        if not name:
-            return "Unknown"
-        # Remove invalid characters
-        name = re.sub(r'[\\/*?:"<>|]', "", name)
-        # Replace multiple spaces/dots
+    def sanitize(self, name):
+        """Sanitize filename components."""
+        if not name: return "Unknown"
+        name = re.sub(r'[\\/*?:"<>|]', "", str(name))
         name = re.sub(r'\s+', ' ', name).strip()
-        name = re.sub(r'\.+', '.', name).strip('.')
-        if not name:
-            return "Unknown"
-        return name
+        name = name.strip('.')
+        return name if name else "Unknown"
 
-    def validate_metadata(self, metadata: dict) -> bool:
-        """
-        Validate that essential metadata is present.
-        Required: artist, title, album, date (year).
-        """
-        required_keys = ['artist', 'title', 'album', 'date']
-        for key in required_keys:
-            if key not in metadata or not metadata[key]:
-                return False
-        return True
+    def get_music_path(self, metadata, ext):
+        """Generate archival path for audio."""
+        artist = self.sanitize(metadata.get('artist'))
+        title = self.sanitize(metadata.get('title'))
+        album = self.sanitize(metadata.get('album'))
 
-    def _get_year(self, date_str: str) -> str:
-        """Extract 4-digit year from date string."""
-        if not date_str:
-            return "0000"
-        match = re.search(r'\d{4}', str(date_str))
-        return match.group(0) if match else "0000"
+        # Year extraction
+        date = str(metadata.get('date', '0000'))
+        year = date[:4] if len(date) >= 4 else "0000"
 
-    def archive_audio(self, filepath: str, metadata: dict) -> str:
-        """
-        Move audio file and its accompanying .lrc file to the final structure:
-        Music > Artist > Album [Release Year] > Artist - Song.Format
-        """
-        if not self.validate_metadata(metadata):
-            raise ValueError(f"Invalid metadata for {filepath}: {metadata}")
-
-        artist = self.sanitize_filename(metadata['artist'])
-        album = self.sanitize_filename(metadata['album'])
-        title = self.sanitize_filename(metadata['title'])
-        year = self._get_year(metadata['date'])
-
-        # Construct path: Music/Artist/Album [Year]/
-        album_folder = f"{album} [{year}]"
-        dest_dir = self.music_base_path / artist / album_folder
-        dest_dir.mkdir(parents=True, exist_ok=True)
-
-        # Construct filename: Artist - Song.ext
-        ext = Path(filepath).suffix
+        # Structure: Music/Artist/Album [Year]/Artist - Title.ext
+        folder = self.music_base / artist / f"{album} [{year}]"
         filename = f"{artist} - {title}{ext}"
-        dest_path = dest_dir / filename
+        return folder / filename
 
-        # Move Audio File
-        shutil.move(filepath, dest_path)
+    def get_video_path(self, metadata, ext):
+        """Generate archival path for video."""
+        artist = self.sanitize(metadata.get('artist'))
+        title = self.sanitize(metadata.get('title'))
 
-        # Check for and move .lrc file if it exists
-        lrc_source = Path(filepath).with_suffix('.lrc')
-        if lrc_source.exists():
-            lrc_dest = dest_dir / f"{artist} - {title}.lrc"
-            shutil.move(lrc_source, lrc_dest)
-
-        return str(dest_path)
-
-    def archive_video(self, filepath: str, metadata: dict) -> str:
-        """
-        Move video file and its accompanying .srt file to the final structure:
-        Music Videos > Artist - Song.Format
-        """
-        if not self.validate_metadata(metadata):
-            # Fallback if metadata is incomplete but we have Artist/Title from search
-            if 'artist' not in metadata or 'title' not in metadata:
-                 raise ValueError(f"Invalid metadata for {filepath}: {metadata}")
-
-        artist = self.sanitize_filename(metadata['artist'])
-        title = self.sanitize_filename(metadata['title'])
-
-        # Construct filename: Artist - Song.ext
-        ext = Path(filepath).suffix
+        # Structure: Music Videos/Artist - Title.ext
         filename = f"{artist} - {title}{ext}"
-        dest_path = self.video_base_path / filename
+        return self.video_base / filename
 
-        # Move Video File
-        shutil.move(filepath, dest_path)
+    def archive_audio(self, src_path, metadata):
+        """Move audio and LRC to final destination."""
+        if not os.path.exists(src_path): return None
 
-        # Check for and move .srt file if it exists
-        srt_source = Path(filepath).with_suffix('.srt')
-        if srt_source.exists():
-            srt_dest = self.video_base_path / f"{artist} - {title}.srt"
-            shutil.move(srt_source, srt_dest)
+        dest = self.get_music_path(metadata, Path(src_path).suffix)
+        dest.parent.mkdir(parents=True, exist_ok=True)
 
-        return str(dest_path)
+        try:
+            shutil.move(src_path, dest)
+            logger.info(f"Archived Audio: {dest}")
+
+            # Move LRC if exists
+            lrc_src = Path(src_path).with_suffix('.lrc')
+            if lrc_src.exists():
+                lrc_dest = dest.with_suffix('.lrc')
+                shutil.move(lrc_src, lrc_dest)
+
+            return str(dest)
+        except Exception as e:
+            logger.error(f"Archive Audio Failed: {e}")
+            return None
+
+    def archive_video(self, src_path, metadata):
+        """Move video and SRT to final destination."""
+        if not os.path.exists(src_path): return None
+
+        dest = self.get_video_path(metadata, Path(src_path).suffix)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+
+        try:
+            shutil.move(src_path, dest)
+            logger.info(f"Archived Video: {dest}")
+
+            # Move SRT if exists
+            srt_src = Path(src_path).with_suffix('.srt')
+            if srt_src.exists():
+                srt_dest = dest.with_suffix('.srt')
+                shutil.move(srt_src, srt_dest)
+
+            return str(dest)
+        except Exception as e:
+            logger.error(f"Archive Video Failed: {e}")
+            return None
+
+    def check_exists(self, metadata, file_type='audio'):
+        """Check if final file already exists."""
+        if file_type == 'audio':
+            # Check common extensions
+            for ext in ['.flac', '.mp3', '.m4a']:
+                path = self.get_music_path(metadata, ext)
+                if path.exists(): return str(path)
+        elif file_type == 'video':
+            for ext in ['.mp4', '.mkv', '.webm']:
+                path = self.get_video_path(metadata, ext)
+                if path.exists(): return str(path)
+        return None
