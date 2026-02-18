@@ -356,3 +356,63 @@ class Ingest:
         clean_title = clean_title.replace("Official Video", "").replace("Official Audio", "").strip()
 
         return self.search_tidal(clean_title, limit=1)
+
+if __name__ == "__main__":
+    import argparse
+    import yaml
+
+    # Load config
+    try:
+        with open("config.yaml", "r") as f:
+            config = yaml.safe_load(f)
+    except FileNotFoundError:
+        config = {'tidal': {}, 'deezer': {}}
+        print("Warning: config.yaml not found, using empty config.")
+
+    parser = argparse.ArgumentParser(description="Ingest Module CLI")
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    # Search Tidal
+    p_tidal = subparsers.add_parser("search_tidal")
+    p_tidal.add_argument("query", help="Search query")
+
+    # Search Deezer
+    p_deezer = subparsers.add_parser("search_deezer")
+    p_deezer.add_argument("query", help="Search query")
+
+    # Search YouTube
+    p_yt = subparsers.add_parser("search_youtube")
+    p_yt.add_argument("query", help="Search query (Artist - Title)")
+
+    # Download YouTube
+    p_dl_yt = subparsers.add_parser("download_youtube")
+    p_dl_yt.add_argument("url", help="YouTube URL")
+    p_dl_yt.add_argument("output", help="Output filename")
+
+    args = parser.parse_args()
+    ingest = Ingest(config)
+
+    if args.command == "search_tidal":
+        results = ingest.search_tidal(args.query)
+        print(json.dumps([{'title': r['title'], 'artist': r['artist']} for r in results], indent=2))
+
+    elif args.command == "search_deezer":
+        results = ingest.search_deezer(args.query)
+        print(json.dumps([{'title': r['title'], 'artist': r['artist']} for r in results], indent=2))
+
+    elif args.command == "search_youtube":
+        # Split query if possible
+        parts = args.query.split(" - ")
+        artist = parts[0]
+        title = parts[1] if len(parts) > 1 else args.query
+        result = ingest.search_and_select_best_video(artist, title)
+        if result:
+            print(json.dumps({'title': result['title'], 'url': result['url']}, indent=2))
+        else:
+            print("No suitable video found.")
+
+    elif args.command == "download_youtube":
+        # Mock obj structure
+        obj = {'webpage_url': args.url}
+        res = ingest.download_youtube_video(obj, args.output)
+        print(f"Download result: {res}")

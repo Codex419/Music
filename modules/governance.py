@@ -104,3 +104,46 @@ class Governance:
                 path = self.get_video_path(metadata, ext)
                 if path.exists(): return str(path)
         return None
+
+if __name__ == "__main__":
+    import argparse
+    import yaml
+
+    try:
+        with open("config.yaml", "r") as f:
+            config = yaml.safe_load(f)
+    except FileNotFoundError:
+        config = {'paths': {'music_dir': 'Output/Music', 'video_dir': 'Output/Music Videos'}}
+        print("Warning: config.yaml not found, using default config.")
+
+    parser = argparse.ArgumentParser(description="Governance Module CLI")
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    # Archive Audio
+    p_audio = subparsers.add_parser("archive_audio")
+    p_audio.add_argument("file", help="Input file path")
+    p_audio.add_argument("--artist", required=True)
+    p_audio.add_argument("--title", required=True)
+    p_audio.add_argument("--album", required=True)
+    p_audio.add_argument("--date", default="2023")
+
+    # Archive Video
+    p_video = subparsers.add_parser("archive_video")
+    p_video.add_argument("file", help="Input file path")
+    p_video.add_argument("--artist", required=True)
+    p_video.add_argument("--title", required=True)
+
+    args = parser.parse_args()
+    gov = Governance(config)
+
+    meta = {'artist': args.artist, 'title': args.title}
+    if hasattr(args, 'album'): meta['album'] = args.album
+    if hasattr(args, 'date'): meta['date'] = args.date
+
+    if args.command == "archive_audio":
+        res = gov.archive_audio(args.file, meta)
+        print(f"Archived Audio: {res}")
+
+    elif args.command == "archive_video":
+        res = gov.archive_video(args.file, meta)
+        print(f"Archived Video: {res}")

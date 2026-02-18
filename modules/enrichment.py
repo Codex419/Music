@@ -194,3 +194,43 @@ class Enrichment:
                 audio.save()
         except Exception as e:
             logger.error(f"Embed lyrics failed: {e}")
+
+if __name__ == "__main__":
+    import argparse
+    import yaml
+
+    try:
+        with open("config.yaml", "r") as f:
+            config = yaml.safe_load(f)
+    except FileNotFoundError:
+        config = {'ai': {}}
+        print("Warning: config.yaml not found, using empty config.")
+
+    parser = argparse.ArgumentParser(description="Enrichment Module CLI")
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    # Transcribe
+    p_trans = subparsers.add_parser("transcribe")
+    p_trans.add_argument("file", help="Input file path")
+    p_trans.add_argument("--format", choices=['lrc', 'srt'], default='lrc')
+
+    # Transfer Metadata
+    p_meta = subparsers.add_parser("transfer_metadata")
+    p_meta.add_argument("audio", help="Source audio file")
+    p_meta.add_argument("video", help="Target video file")
+
+    args = parser.parse_args()
+    enrichment = Enrichment(config)
+
+    if args.command == "transcribe":
+        if not os.path.exists(args.file):
+            print(f"Error: File not found: {args.file}")
+        else:
+            res = enrichment.transcribe_file(args.file, args.format)
+            print(f"Transcription result: {res}")
+
+    elif args.command == "transfer_metadata":
+        if enrichment.transfer_metadata(args.audio, args.video):
+            print("Metadata transfer successful.")
+        else:
+            print("Metadata transfer failed.")
