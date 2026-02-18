@@ -26,10 +26,10 @@ web_dl:
   audio_format: flac
   download_delay: 2
   video_format: mp4
-  concurrent_limit: 3
+  concurrent_limit: 1
 ai:
   beam_size: 5
-  device: auto
+  device: cuda
   model_size: large-v2
   precision: int8
   vad_filter: true

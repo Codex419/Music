@@ -306,28 +306,41 @@ class Ingest:
         """Search YouTube. Returns list of dicts."""
         if not YT_DLP_AVAILABLE: return []
 
+        # 'extract_flat': 'in_playlist' allows getting metadata for search results without deep extraction
+        # but 'extract_flat': True might be too shallow for some thumbnails.
+        # We'll use 'extract_flat': 'in_playlist' which is safer for search queries.
         ydl_opts = {
             'quiet': True,
             'default_search': f'ytsearch{limit}',
             'noplaylist': True,
-            'extract_flat': True # Faster search, get basics
+            'extract_flat': 'in_playlist',
+            'skip_download': True,
+            'ignoreerrors': True,
         }
 
         candidates = []
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(f"{query} Official Music Video", download=False)
-                if 'entries' in info:
-                    for vid in info['entries']:
-                        candidates.append({
-                            'source': 'YouTube',
-                            'title': vid.get('title'),
-                            'artist': vid.get('uploader'), # Approx
-                            'album': 'N/A',
-                            'duration': vid.get('duration'),
-                            'cover_url': vid.get('thumbnail'), # Often available in flat extraction? if not, need full extraction
-                            'obj': vid # Stores the info dict
-                        })
+
+                entries = info.get('entries', [])
+                if not entries and 'entries' not in info:
+                     # Sometimes info IS the result if single match? Unlikely for ytsearch
+                     entries = [info]
+
+                for vid in entries:
+                    if not vid: continue
+                    # For flat extraction, thumbnails might be missing or limited
+                    # We accept what we get.
+                    candidates.append({
+                        'source': 'YouTube',
+                        'title': vid.get('title', 'Unknown'),
+                        'artist': vid.get('uploader', 'Unknown'),
+                        'album': 'N/A',
+                        'duration': vid.get('duration', 0),
+                        'cover_url': vid.get('thumbnail') or vid.get('thumbnails', [{}])[-1].get('url'),
+                        'obj': vid
+                    })
         except Exception as e:
             logger.error(f"YouTube search failed: {e}")
         return candidates
