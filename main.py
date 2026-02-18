@@ -1,5 +1,5 @@
 import tkinter as tk
-from tkinter import ttk, messagebox, filedialog, scrolledtext
+from tkinter import ttk, messagebox, filedialog, simpledialog, scrolledtext
 import threading
 import queue
 import logging
@@ -159,17 +159,49 @@ class MusicDownloaderApp(TK_ROOT):
 
         # Treeview
         columns = ("Song", "Artist", "Album", "Status")
-        self.tree = ttk.Treeview(self.tab_queue, columns=columns, show='headings')
+        self.tree = ttk.Treeview(self.tab_queue, columns=columns, show='headings', selectmode="extended")
         for col in columns:
             self.tree.heading(col, text=col)
             self.tree.column(col, width=150)
         self.tree.column("Status", width=300)
         self.tree.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
 
+        # Treeview Events
+        self.tree.bind("<Delete>", self.delete_selected_items)
+        self.tree.bind("<Button-1>", self.on_tree_click)
+        self.tree.bind("<B1-Motion>", self.on_tree_drag)
+        self.tree.bind("<ButtonRelease-1>", self.on_tree_release)
+
         # Drag Drop
         if DND_AVAILABLE:
             self.tree.drop_target_register(DND_FILES)
             self.tree.dnd_bind('<<Drop>>', self.handle_drop)
+
+    def delete_selected_items(self, event):
+        selected = self.tree.selection()
+        for item in selected:
+            self.tree.delete(item)
+
+    def on_tree_click(self, event):
+        # Record item and index for drag start
+        item = self.tree.identify_row(event.y)
+        if item:
+            self.drag_start_item = item
+            self.drag_start_index = self.tree.index(item)
+
+    def on_tree_drag(self, event):
+        # Visual feedback could be added here
+        pass
+
+    def on_tree_release(self, event):
+        # Move item
+        target_item = self.tree.identify_row(event.y)
+        if target_item and hasattr(self, 'drag_start_item') and self.drag_start_item:
+            if target_item != self.drag_start_item:
+                # Move to index of target
+                target_index = self.tree.index(target_item)
+                self.tree.move(self.drag_start_item, "", target_index)
+        self.drag_start_item = None
 
     def setup_settings_tab(self):
         # Helper to create label+entry/combobox
@@ -550,6 +582,9 @@ class MusicDownloaderApp(TK_ROOT):
             if not candidates:
                 ttk.Label(scroll_frame, text="No results found.").pack(pady=20)
             else:
+                # Store images to prevent GC
+                self.popup_images = []
+
                 for idx, cand in enumerate(candidates):
                     # Item Frame
                     frame = ttk.Frame(scroll_frame, relief="groove", borderwidth=1)
@@ -558,9 +593,31 @@ class MusicDownloaderApp(TK_ROOT):
                     # Info
                     info_text = f"{cand['title']}\n{cand['artist']} - {cand['album']}\nSource: {cand['source']} | Duration: {cand['duration']}s"
 
-                    # Image Placeholder (Async loading too complex for this snippet, showing text)
+                    # Image Placeholder
+                    img_label = ttk.Label(frame, text="[...]", width=10)
+                    img_label.pack(side="left", padx=5)
+
+                    # Async Image Load
                     if cand.get('cover_url'):
-                        ttk.Label(frame, text="[IMG]", width=6).pack(side="left", padx=5) # Placeholder
+                        def load_img(url, lbl):
+                            try:
+                                import requests
+                                from PIL import Image, ImageTk
+                                import io
+                                resp = requests.get(url, timeout=5)
+                                if resp.status_code == 200:
+                                    img_data = resp.content
+                                    img = Image.open(io.BytesIO(img_data))
+                                    img.thumbnail((80, 80))
+                                    tk_img = ImageTk.PhotoImage(img)
+                                    self.popup_images.append(tk_img) # Keep reference
+                                    lbl.configure(image=tk_img, text="")
+                            except Exception:
+                                lbl.configure(text="[No Img]")
+
+                        threading.Thread(target=load_img, args=(cand['cover_url'], img_label), daemon=True).start()
+                    else:
+                        img_label.configure(text="[No URL]")
 
                     lbl = ttk.Label(frame, text=info_text, justify="left", font=("Segoe UI", 9))
                     lbl.pack(side="left", padx=10, fill="x", expand=True)
@@ -579,7 +636,7 @@ class MusicDownloaderApp(TK_ROOT):
                 dialog.destroy()
 
             def modify_search():
-                new_q = filedialog.askstring("Modify Search", "Enter new query:", parent=dialog)
+                new_q = simpledialog.askstring("Modify Search", "Enter new query:", parent=dialog)
                 if new_q:
                     self.user_decision = f"modify:{new_q}"
                     self.user_input_event.set()

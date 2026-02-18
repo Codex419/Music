@@ -220,13 +220,27 @@ class Ingest:
 
         try:
             logger.info(f"Attempting to download Tidal track {track.name}")
-            # Try to fetch real stream URL (requires valid session)
             if self.tidal_session:
                 try:
-                    # Note: method names might vary by tidalapi version
-                    stream_url = self.tidal_session.track.get_url(track.id, audio_quality=self.config['tidal'].get('quality', 'HI_RES'))
-                    response = requests.get(stream_url, stream=True)
-                    if response.status_code == 200:
+                    # Check method existence
+                    if hasattr(self.tidal_session.track, 'get_url'):
+                        stream_url = self.tidal_session.track.get_url(track.id)
+                    elif hasattr(self.tidal_session.track, 'get_stream_url'):
+                        stream_url = self.tidal_session.track.get_stream_url(track.id)
+                    elif hasattr(track, 'get_url'):
+                        stream_url = track.get_url()
+                    else:
+                        # Some versions use direct track object
+                        stream_url = self.tidal_session.track(track.id).get_url()
+
+                    if stream_url:
+                        response = requests.get(stream_url, stream=True)
+                        if response.status_code == 200:
+                            with open(output_path, 'wb') as f:
+                                for chunk in response.iter_content(chunk_size=1024):
+                                    f.write(chunk)
+                            logger.info(f"Downloaded Tidal track to {output_path}")
+                            return output_path
                         with open(output_path, 'wb') as f:
                             for chunk in response.iter_content(chunk_size=1024):
                                 f.write(chunk)
