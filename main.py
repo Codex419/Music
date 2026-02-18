@@ -14,7 +14,6 @@ from pathlib import Path
 from modules.ingest import Ingest
 from modules.enrichment import Enrichment
 from modules.governance import Governance
-from modules.setup import check_model
 
 # Logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
